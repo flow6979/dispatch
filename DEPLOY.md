@@ -1,49 +1,41 @@
 # Dispatch — Deploy & Mobile (APK) Guide
 
-Goal: run Dispatch as an installable Android APK that talks to a free-hosted backend, with the runner on your laptop.
-
 ```
  Android APK ──https──▶  Render (free backend)  ◀──wss── Laptop runner (your machine)
 ```
-The phone and the runner both connect OUT to the hosted backend, so the phone works from anywhere and your laptop only needs outbound internet.
+Phone and runner both connect OUT to the hosted backend, so the phone works anywhere and the laptop only needs outbound internet.
 
----
+## Live backend (Render, free)
+- **URL:** https://dispatch-backend-syxb.onrender.com  (health: `/api/health`)
+- Free tier sleeps after ~15 min idle → first request cold-starts (~30–50s), then fast.
+- Deployed via `render.yaml` blueprint (rootDir `backend`, binds `$PORT`).
 
-## Step 1 — Backend on Render (free)  ⟵ needs your free Render account
-The repo includes `render.yaml`, so this is near one-click:
-1. Go to https://render.com → sign up / log in **with GitHub** (free).
-2. **New → Blueprint** → pick the `dispatch` repo → **Apply**.
-3. Wait for the deploy. You'll get a URL like `https://dispatch-backend.onrender.com`.
-4. Verify: open `https://dispatch-backend.onrender.com/api/health` → `{"ok":true,...}`.
-
-> Free tier sleeps after ~15 min idle → the first request after idle takes ~30–50s (cold start), then it's fast. The service itself persists (longevity is fine).
-
-Tell me the URL and I'll bake it into the APK build + point the runner at it.
-
-## Step 2 — Point the runner at the hosted backend  ⟵ I automate once I have the URL
-On your laptop:
+## Runner → hosted backend (on your laptop)
 ```
 cd dispatch/runner
-DISPATCH_BACKEND=dispatch-backend.onrender.com DISPATCH_STUB=1 npm start
+DISPATCH_BACKEND=https://dispatch-backend-syxb.onrender.com DISPATCH_STUB=1 npm start
 ```
-(The runner connects out via `wss://`. Keep it running while you test. Use `DISPATCH_STUB=0` for real PRs.)
+The runner derives `wss://` from the https URL automatically. Keep it running while you test.
+Use `DISPATCH_STUB=0` for real PRs.
 
-## Step 3 — Build the APK (EAS)  ⟵ needs your free Expo account
-Config is already in `app/eas.json` + `app/app.json` (package `com.flow6979.dispatch`, cleartext + INTERNET, APK profile).
+## APK — built locally with Gradle (no Expo account), released on GitHub
+This mirrors the `flow6979/root` approach: local build → `gh release create`.
+Our app is Expo, so it's `expo prebuild` (done) → Gradle `assembleRelease`.
+
+- Render URL is baked in via `app/.env` (`EXPO_PUBLIC_API_BASE`).
+- Release build is JS-bundled and debug-signed → **standalone + installable** (no Metro needed).
+- Build script: `app/build-apk.sh` (installs SDK platform 36 / build-tools 36, runs `./gradlew assembleRelease`).
+
+Build + release:
 ```
-cd dispatch/app
-npx eas-cli login                     # free Expo account
-# I will set EXPO_PUBLIC_API_BASE in eas.json to your Render URL first
-npx eas-cli build -p android --profile preview
+bash dispatch/app/build-apk.sh
+# -> app/android/app/build/outputs/apk/release/app-release.apk
+gh release create v0.1.0 -R flow6979/dispatch \
+  --title "Dispatch v0.1.0" --notes "MVP test build" \
+  dispatch/app/android/app/build/outputs/apk/release/app-release.apk
 ```
-EAS builds in the cloud (~10–15 min) and gives a download link. Open it on your phone → install the APK (allow "install from unknown sources").
+Then open the release on your phone and download/install the APK (allow "install from unknown sources").
 
-Alternatively give me an `EXPO_TOKEN` (Expo dashboard → Account → Access Tokens) and I'll trigger the build for you.
-
-## Step 4 — Publish the APK as a GitHub Release (optional, easy phone download)
-Once EAS produces the `.apk`, I'll attach it to a GitHub Release on the public repo so you can download it directly from your phone browser.
-
----
-
-## Fastest smoke test (no build) — Expo Go
-If you just want to see it on the phone in ~2 min: install **Expo Go** (Play Store), then on the laptop `cd dispatch/app && npx expo start --tunnel`, scan the QR. (Point it at the Render URL via `EXPO_PUBLIC_API_BASE`.)
+## Toolchain notes (this machine)
+- Android SDK: `~/Library/Android/sdk` · JDK 24 · Gradle wrapper 9.3.1 · Expo SDK 57 / RN 0.86 (compileSdk 36).
+- No iOS build (no Xcode); Android only for now.
