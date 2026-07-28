@@ -1,0 +1,16 @@
+{
+  "name": "dispatch-runner",
+  "version": "0.0.0",
+  "description": "Dispatch laptop runner daemon — async coding-agent orchestrator (v0 MVP)",
+  "type": "commonjs",
+  "main": "runner.js",
+  "scripts": {
+    "start": "node runner.js",
+    "dev": "node runner.js",
+    "selftest": "node runner.js --selftest"
+  },
+  "dependencies": {
+    "nanoid": "^3.3.7",
+    "ws": "^8.18.0"
+  }
+}

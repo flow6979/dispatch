@@ -1,0 +1,15 @@
+# Render blueprint — deploys the Dispatch backend as a free web service.
+# One-click: on render.com → New → Blueprint → connect this repo → Apply.
+services:
+  - type: web
+    name: dispatch-backend
+    runtime: node
+    rootDir: backend
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "22"

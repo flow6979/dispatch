@@ -1,0 +1,178 @@
+import React, { useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  Pressable,
+  TextInput,
+  ScrollView,
+  ActivityIndicator,
+} from 'react-native';
+import { router } from 'expo-router';
+import { C, statusOf } from '../../src/theme';
+import { StatusBarFaux, ContextBar, TaskRow } from '../../src/components';
+import { CapLabel, OfflineBanner } from '../../src/ui';
+import { useTasks, useContext } from '../../src/hooks';
+import { api } from '../../src/api';
+
+export default function Capture() {
+  const { tasks, offline, refresh } = useTasks();
+  const { context } = useContext();
+  const [text, setText] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [listening, setListening] = useState(false);
+
+  const recent = tasks.slice(0, 5);
+
+  async function submit() {
+    const promptText = text.trim();
+    if (!promptText || submitting) return;
+    setSubmitting(true);
+    try {
+      const res = await api.createTask({
+        promptText,
+        repo: context?.repo || null,
+        baseBranch: context?.baseBranch || null,
+        workBranch: context?.workBranch || null,
+      });
+      setText('');
+      refresh();
+      const t = res && res.task;
+      if (t && statusOf(t.state) === 'needsyou') {
+        router.push(`/spec/${t.id}`);
+      }
+    } catch (e) {
+      // offline banner covers failure; keep text so user can retry
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <View style={styles.screen}>
+      <StatusBarFaux />
+      <OfflineBanner visible={offline} />
+      <ContextBar context={context} offline={offline} />
+
+      <View style={styles.captureArea}>
+        <Pressable
+          onPress={() => setListening((v) => !v)}
+          style={[styles.mic, listening && styles.micOn]}
+        >
+          <View style={styles.micStand} />
+          <View style={styles.micBody} />
+        </Pressable>
+        <Text style={styles.hint}>
+          {listening ? 'Listening… (v0 placeholder — type below)' : 'Hold to speak'}
+        </Text>
+
+        <View style={styles.inputRow}>
+          <TextInput
+            style={styles.input}
+            placeholder="or type a task…"
+            placeholderTextColor={C.muted}
+            value={text}
+            onChangeText={setText}
+            onSubmitEditing={submit}
+            returnKeyType="send"
+            multiline={false}
+          />
+          <Pressable
+            style={[styles.send, (!text.trim() || submitting) && { opacity: 0.4 }]}
+            onPress={submit}
+            disabled={!text.trim() || submitting}
+          >
+            {submitting ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Text style={styles.sendTxt}>→</Text>
+            )}
+          </Pressable>
+        </View>
+      </View>
+
+      <View style={styles.divider} />
+
+      <View style={styles.recent}>
+        <CapLabel>Recent</CapLabel>
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 8 }}>
+          {recent.length === 0 && (
+            <Text style={styles.empty}>
+              {offline ? 'Waiting for backend…' : 'No tasks yet. Capture one above.'}
+            </Text>
+          )}
+          {recent.map((t) => (
+            <TaskRow
+              key={t.id}
+              task={t}
+              onPress={() =>
+                statusOf(t.state) === 'needsyou'
+                  ? router.push(`/spec/${t.id}`)
+                  : router.push(`/tasks/${t.id}`)
+              }
+            />
+          ))}
+        </ScrollView>
+      </View>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: C.canvas },
+  captureArea: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 16,
+    padding: 24,
+  },
+  mic: {
+    width: 104,
+    height: 104,
+    borderRadius: 52,
+    backgroundColor: C.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+    boxShadow: '0 8px 30px rgba(59,130,246,0.45)',
+  },
+  micOn: { backgroundColor: C.needsyou },
+  micBody: { width: 22, height: 34, backgroundColor: '#fff', borderRadius: 11 },
+  micStand: {
+    position: 'absolute',
+    bottom: 30,
+    width: 30,
+    height: 14,
+    borderWidth: 3,
+    borderTopWidth: 0,
+    borderColor: '#fff',
+    borderBottomLeftRadius: 16,
+    borderBottomRightRadius: 16,
+  },
+  hint: { fontSize: 14, color: C.text2 },
+  inputRow: { flexDirection: 'row', alignItems: 'center', gap: 10, width: '100%' },
+  input: {
+    flex: 1,
+    height: 52,
+    backgroundColor: C.surface2,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    color: C.text,
+    fontSize: 14,
+    outlineStyle: 'none',
+  },
+  send: {
+    width: 52,
+    height: 52,
+    borderRadius: 14,
+    backgroundColor: C.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sendTxt: { color: '#fff', fontSize: 22, fontWeight: '700' },
+  divider: { height: 1, backgroundColor: C.border },
+  recent: { flex: 1, paddingHorizontal: 20, paddingTop: 12, maxHeight: 240 },
+  empty: { color: C.muted, fontSize: 13, paddingVertical: 16 },
+});

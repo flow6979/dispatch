@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dispatch — MVP App Design</title>
+<style>
+  :root{
+    --canvas:#0E0F13; --surface:#191B21; --surface2:#23262E; --surface3:#2A2E37;
+    --border:#2E323B; --text:#F4F5F7; --text2:#9CA3AF; --muted:#6B7280;
+    --accent:#3B82F6; --accent-soft:rgba(59,130,246,.16);
+    --queued:#6B7280; --running:#4C9AFF; --needsyou:#F5A623; --ready:#30D158; --blocked:#FF453A;
+    --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#08090C;color:var(--text);font-family:var(--font);padding:48px 40px 80px;-webkit-font-smoothing:antialiased}
+
+  /* ---- board header ---- */
+  .board-head{max-width:1400px;margin:0 auto 44px}
+  .board-head h1{font-size:30px;font-weight:800;letter-spacing:-.02em}
+  .board-head p{color:var(--text2);font-size:15px;margin-top:8px;max-width:640px;line-height:1.5}
+  .legend{display:flex;gap:18px;flex-wrap:wrap;margin-top:20px;font-size:12.5px;color:var(--text2)}
+  .legend span{display:inline-flex;align-items:center;gap:7px}
+  .dot{width:9px;height:9px;border-radius:50%;display:inline-block;flex:0 0 auto}
+  .d-queued{background:var(--queued)} .d-running{background:var(--running)}
+  .d-needsyou{background:var(--needsyou)} .d-ready{background:var(--ready)} .d-blocked{background:var(--blocked)}
+
+  /* ---- board layout ---- */
+  .board{display:flex;flex-wrap:wrap;gap:56px 40px;justify-content:center;align-items:flex-start;max-width:1400px;margin:0 auto}
+  .screen{display:flex;flex-direction:column;gap:14px}
+  .screen > .cap{font-size:13px;font-weight:600;color:var(--text2);letter-spacing:.01em}
+  .screen > .cap b{color:var(--text);font-weight:700}
+  .screen > .cap small{display:block;color:var(--muted);font-weight:400;font-size:11.5px;margin-top:3px;max-width:360px;line-height:1.45}
+
+  /* ---- phone frame ---- */
+  .phone{width:372px;height:806px;background:var(--canvas);border-radius:42px;
+    border:1px solid #2A2D35;box-shadow:0 0 0 10px #16181D,0 30px 60px rgba(0,0,0,.55);
+    position:relative;overflow:hidden;display:flex;flex-direction:column}
+  .notch{position:absolute;top:12px;left:50%;transform:translateX(-50%);width:120px;height:26px;background:#000;border-radius:0 0 16px 16px;z-index:5}
+
+  /* ---- status bar ---- */
+  .statusbar{height:50px;flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;padding:0 24px 0 26px;font-size:13px;font-weight:600}
+  .statusbar .r{display:flex;gap:6px;align-items:center;color:var(--text)}
+  .statusbar .bar{width:17px;height:11px;border:1.4px solid var(--text);border-radius:3px;opacity:.9}
+  .statusbar .bar::after{content:"";position:absolute}
+
+  /* ---- generic ---- */
+  .col{display:flex;flex-direction:column}
+  .row{display:flex;align-items:center}
+  .fill{flex:1 1 auto;min-height:0}
+  .divider{height:1px;background:var(--border);flex:0 0 auto}
+  .pad{padding:16px 20px}
+  .muted{color:var(--muted)} .t2{color:var(--text2)}
+  .cap-label{font-size:11px;font-weight:700;letter-spacing:.08em;color:var(--muted);text-transform:uppercase}
+
+  /* ---- context bar ---- */
+  .ctx{padding:14px 20px 15px;background:var(--surface);border-bottom:1px solid var(--border);flex:0 0 auto}
+  .ctx .repo{font-size:16px;font-weight:700;display:flex;align-items:center;gap:8px}
+  .ctx .branch{font-size:12.5px;color:var(--text2);margin-top:5px;display:flex;align-items:center;gap:7px}
+  .pill-draft{font-size:10.5px;font-weight:700;color:var(--ready);background:rgba(48,209,88,.14);padding:2px 8px;border-radius:20px;letter-spacing:.02em}
+  .chip-switch{margin-left:auto;font-size:11.5px;color:var(--accent);font-weight:600}
+
+  /* ---- tab bar ---- */
+  .tabs{height:66px;flex:0 0 auto;display:flex;background:var(--surface);border-top:1px solid var(--border);padding-bottom:6px}
+  .tab{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;font-size:11px;color:var(--muted);font-weight:600}
+  .tab.on{color:var(--accent)}
+  .tab .ic{width:22px;height:22px;border-radius:6px;border:2px solid currentColor;opacity:.9}
+  .tab.mic .ic{border-radius:50%}
+
+  /* ---- mic ---- */
+  .capture-area{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:24px}
+  .mic{width:104px;height:104px;border-radius:50%;background:var(--accent);position:relative;display:flex;align-items:center;justify-content:center;box-shadow:0 8px 30px rgba(59,130,246,.45)}
+  .mic::before{content:"";position:absolute;inset:-14px;border-radius:50%;border:2px solid var(--accent);opacity:.35;animation:pulse 2.2s ease-out infinite}
+  @keyframes pulse{0%{transform:scale(.9);opacity:.5}100%{transform:scale(1.35);opacity:0}}
+  .mic .m{width:22px;height:34px;background:#fff;border-radius:11px}
+  .mic .stand{position:absolute;bottom:30px;width:30px;height:14px;border:3px solid #fff;border-top:none;border-radius:0 0 16px 16px}
+  .hint{font-size:14px;color:var(--text2)}
+  .type-pill{width:100%;height:52px;background:var(--surface2);border:1px solid var(--border);border-radius:14px;display:flex;align-items:center;padding:0 16px;color:var(--muted);font-size:14px}
+
+  /* ---- task rows ---- */
+  .task{display:flex;gap:12px;align-items:flex-start;padding:11px 0}
+  .task .tdot{width:10px;height:10px;border-radius:50%;margin-top:5px;flex:0 0 auto}
+  .task .tt{font-size:14.5px;color:var(--text);font-weight:500}
+  .task .ts{font-size:12px;color:var(--muted);margin-top:2px}
+  .task .prog{margin-left:auto;font-size:11.5px;color:var(--running);font-weight:600;flex:0 0 auto}
+  .pulse{animation:blink 1.4s ease-in-out infinite}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:.35}}
+
+  .grouphdr{font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;margin:16px 0 4px}
+  .g-need{color:var(--needsyou)} .g-run{color:var(--running)} .g-ready{color:var(--ready)} .g-done{color:var(--muted)}
+
+  /* ---- buttons ---- */
+  .btn{height:50px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700}
+  .btn-pri{background:var(--accent);color:#fff}
+  .btn-sec{background:var(--surface2);color:var(--text);border:1px solid var(--border)}
+  .btn-sm{height:38px;border-radius:10px;font-size:13px;font-weight:600;padding:0 16px}
+
+  /* chips / assumptions */
+  .assum{display:flex;align-items:center;gap:8px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:13px;color:var(--text)}
+  .assum .edit{margin-left:auto;color:var(--accent);font-size:12px;font-weight:600}
+  .conf{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text2)}
+  .meter{flex:1;height:6px;background:var(--surface2);border-radius:4px;overflow:hidden}
+  .meter i{display:block;height:100%;background:var(--needsyou);border-radius:4px}
+
+  .searchbar{height:44px;background:var(--surface2);border:1px solid var(--border);border-radius:12px;display:flex;align-items:center;gap:10px;padding:0 14px;color:var(--muted);font-size:14px}
+  .listitem{display:flex;align-items:center;gap:11px;padding:13px 4px;font-size:15px;border-bottom:1px solid rgba(255,255,255,.04)}
+  .listitem .star{color:var(--needsyou)} .listitem .re{color:var(--muted)}
+  .listitem .lock{margin-left:auto;font-size:11px;color:var(--muted);background:var(--surface2);padding:2px 8px;border-radius:20px}
+
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:16px}
+  .backrow{height:52px;display:flex;align-items:center;gap:12px;padding:0 18px;font-size:16px;font-weight:700;flex:0 0 auto}
+  .backrow .x{color:var(--text2);font-weight:400;font-size:20px}
+
+  /* runner menubar */
+  .menubar{width:300px;background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:hidden;box-shadow:0 24px 50px rgba(0,0,0,.5)}
+  .mb-row{padding:11px 16px;font-size:13.5px;display:flex;align-items:center;gap:9px;border-bottom:1px solid rgba(255,255,255,.05)}
+  .mb-row.head{background:var(--surface2);font-weight:700}
+  .mb-row.act{color:var(--text2);font-size:13px}
+  .mb-row .chk{margin-left:auto;color:var(--ready)}
+
+  .onbstep{display:flex;gap:13px;margin-bottom:26px}
+  .onbstep .n{width:26px;height:26px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center;flex:0 0 auto}
+  .code{background:#000;border:1px solid var(--border);border-radius:10px;padding:12px 14px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;color:#8FE39B;margin-top:10px}
+  .waiting{font-size:12.5px;color:var(--needsyou);margin-top:10px;display:flex;align-items:center;gap:8px}
+</style>
+</head>
+<body>
+
+<div class="board-head">
+  <h1>Dispatch — MVP App Design</h1>
+  <p>Voice/text remote for an async coding agent. Capture a task from your phone → your laptop builds it in a branch, runs tests, opens a draft PR → review at a screen. Dark-first, glanceable, one-handed. All 10 MVP surfaces below.</p>
+  <div class="legend">
+    <span><i class="dot d-queued"></i>Queued</span>
+    <span><i class="dot d-running"></i>Running</span>
+    <span><i class="dot d-needsyou"></i>Needs you</span>
+    <span><i class="dot d-ready"></i>Ready</span>
+    <span><i class="dot d-blocked"></i>Blocked</span>
+  </div>
+</div>
+
+<div class="board">
+
+  <!-- 1. ONBOARDING -->
+  <div class="screen">
+    <div class="cap"><b>1 · Onboarding</b><small>Connect GitHub, then pair the laptop with a code.</small></div>
+    <div class="phone"><div class="notch"></div>
+      <div class="statusbar"><span>9:41</span><span class="r">●●● <span class="bar"></span></span></div>
+      <div class="fill col" style="padding:40px 26px;justify-content:center;gap:6px">
+        <div style="font-size:30px;font-weight:800;letter-spacing:-.02em">Dispatch</div>
+        <div class="t2" style="font-size:15px;margin-bottom:38px">code from anywhere</div>
+        <div class="onbstep"><div class="n">1</div><div>
+          <div style="font-weight:700;font-size:15px;margin-bottom:10px">Connect GitHub</div>
+          <div class="btn btn-pri" style="width:230px">Connect with GitHub</div>
+        </div></div>
+        <div class="onbstep"><div class="n">2</div><div>
+          <div style="font-weight:700;font-size:15px">Pair your laptop</div>
+          <div class="t2" style="font-size:12.5px;margin-top:4px">Run this in your terminal:</div>
+          <div class="code">npx dispatch-runner pair A1B2-C3D4</div>
+          <div class="waiting"><span class="dot d-needsyou pulse"></span>waiting for laptop…</div>
+        </div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. CAPTURE -->
+  <div class="screen">
+    <div class="cap"><b>2 · Capture (Home)</b><small>The first screen is the capture screen. Context bar always shows where work lands.</small></div>
+    <div class="phone"><div class="notch"></div>
+      <div class="statusbar"><span>9:41</span><span class="r">●●● <span class="bar"></span></span></div>
+      <div class="ctx">
+        <div class="repo">acme/payment-service<span class="chip-switch">switch</span></div>
+        <div class="branch">⎇ fix/webhook-retry <span class="pill-draft">DRAFT ONLY</span></div>
+      </div>
+      <div class="fill capture-area">
+        <div class="mic"><div class="stand"></div><div class="m"></div></div>
+        <div class="hint">Hold to speak</div>
+        <div class="type-pill">or type a task…</div>
+      </div>
+      <div class="divider"></div>
+      <div class="pad">
+        <div class="cap-label">Recent</div>
+        <div class="task"><span class="tdot d-running pulse"></span><div><div class="tt">Add retry logic to webhook</div></div><span class="prog">60%</span></div>
+        <div class="task"><span class="tdot d-needsyou"></span><div><div class="tt">Rename export fields</div><div class="ts">"migration direction?"</div></div></div>
+        <div class="task"><span class="tdot d-ready"></span><div><div class="tt">Fix flaky login test</div><div class="ts">PR #214 ready</div></div></div>
+      </div>
+      <div class="tabs">
+        <div class="tab mic on"><div class="ic"></div>Capture</div>
+        <div class="tab"><div class="ic"></div>Tasks</div>
+        <div class="tab"><div class="ic"></div>Digest</div>
+        <div class="tab"><div class="ic"></div>Settings</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. REPO PICKER -->
+  <div class="screen">
+    <div class="cap"><b>3 · Repo Picker</b><small>Match-first, never read-all. Pinned / Recent / All. Voice: "the payments repo".</small></div>
+    <div class="phone"><div class="notch"></div>
+      <div class="statusbar"><span>9:41</span><span class="r">●●● <span class="bar"></span></span></div>
+      <div class="backrow"><span class="x">←</span>Choose a repo</div>
+      <div class="pad" style="padding-top:4px"><div class="searchbar">🔍 search or say a repo name…</div></div>
+      <div class="fill pad" style="padding-top:6px;overflow:hidden">
+        <div class="cap-label">Pinned</div>
+        <div class="listitem"><span class="star">★</span>acme/payment-service</div>
+        <div class="listitem"><span class="star">★</span>acme/core-api</div>
+        <div class="cap-label" style="margin-top:16px">Recent</div>
+        <div class="listitem"><span class="re">↻</span>acme/dashboard-web</div>
+        <div class="listitem"><span class="re">↻</span>acme/billing-worker</div>
+        <div class="cap-label" style="margin-top:16px">All · 47</div>
+        <div class="listitem t2">acme/notifications-svc</div>
+        <div class="listitem t2">acme/infra-terraform</div>
+        <div class="listitem t2">acme/mobile-app</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4. BRANCH PICKER -->
+  <div class="screen">
+    <div class="cap"><b>4 · Branch Picker + Create</b><small>Protected branch forces a working branch. Names are generated from intent — one-word confirm.</small></div>
+    <div class="phone"><div class="notch"></div>
+      <div class="statusbar"><span>9:41</span><span class="r">●●● <span class="bar"></span></span></div>
+      <div class="backrow"><span class="x">←</span>Branch · payment-service</div>
+      <div class="fill pad" style="padding-top:6px">
+        <div class="btn btn-sec" style="margin-bottom:18px">+ Create a new branch</div>
+        <div class="listitem" style="border:none"><b>main</b><span class="lock">🔒 protected</span></div>
+        <div class="cap-label" style="margin-top:10px">Recent</div>
+        <div class="listitem">⎇ fix/webhook-retry</div>
+        <div class="listitem">⎇ staging</div>
+        <div class="listitem t2">⎇ feat/csv-export</div>
+
+        <div class="card" style="margin-top:26px;border-color:var(--accent)">
+          <div class="t2" style="font-size:12.5px;margin-bottom:6px">You said: "a branch for the login retry fix"</div>
+          <div style="font-size:12px;color:var(--muted)">I'll create</div>
+          <div style="font-size:19px;font-weight:800;color:var(--accent);margin:3px 0 2px">fix/login-retry</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:14px">off main</div>
+          <div class="row" style="gap:10px">
+            <div class="btn btn-pri btn-sm" style="flex:1">Create</div>
+            <div class="btn btn-sec btn-sm" style="flex:1">Rename</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5. SPEC CONFIRM -->
+  <div class="screen">
+    <div class="cap"><b>5 · Spec Confirm</b><small>The trust screen: restated goal, editable assumptions, acceptance, risk + confidence meter.</small></div>
+    <div class="phone"><div class="notch"></div>
+      <div class="statusbar"><span>9:41</span><span class="r">●●● <span class="bar"></span></span></div>
+      <div class="pad fill col" style="gap:18px;overflow:hidden">
+        <div>
+          <div class="conf" style="margin-bottom:6px"><span>Before I start</span><div class="meter"><i style="width:70%"></i></div><span>70%</span></div>
+        </div>
+        <div><div class="cap-label" style="margin-bottom:6px">Goal</div>
+          <div style="font-size:16px;font-weight:600;line-height:1.4">Retry the payment webhook up to 3× with backoff on 5xx errors</div></div>
+        <div><div class="cap-label" style="margin-bottom:8px">I'm assuming</div>
+          <div class="assum" style="margin-bottom:8px">Only 5xx, not 4xx<span class="edit">edit</span></div>
+          <div class="assum">Add a unit test<span class="edit">edit</span></div></div>
+        <div><div class="cap-label" style="margin-bottom:6px">Done when</div>
+          <div class="t2" style="font-size:14px">• webhook_spec tests pass</div></div>
+        <div class="row" style="gap:8px;font-size:13px"><span class="cap-label" style="margin:0">Risk</span><span class="dot d-ready"></span><span class="t2">low · branch only</span></div>
+        <div class="fill"></div>
+        <div class="btn btn-pri">Looks right — go</div>
+        <div class="btn btn-sec" style="margin-top:10px">Let me adjust</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 6. TASK BOARD -->
+  <div class="screen">
+    <div class="cap"><b>6 · Task Board</b><small>Grouped by what needs YOU first. Live statuses.</small></div>
+    <div class="phone"><div class="notch"></div>
+      <div class="statusbar"><span>9:41</span><span class="r">●●● <span class="bar"></span></span></div>
+      <div class="backrow">Tasks<span style="margin-left:auto;font-size:13px;color:var(--accent);font-weight:600">filter</span></div>
+      <div class="fill pad" style="padding-top:2px;overflow:hidden">
+        <div class="grouphdr g-need">⚠ Needs you · 1</div>
+        <div class="task"><span class="tdot d-needsyou"></span><div><div class="tt">Rename export fields</div><div class="ts">"which migration direction?"</div></div></div>
+        <div class="grouphdr g-run">● Running · 2</div>
+        <div class="task"><span class="tdot d-running pulse"></span><div><div class="tt">Add retry logic</div></div><span class="prog">60%</span></div>
+        <div class="task"><span class="tdot d-running pulse"></span><div><div class="tt">Fix flaky login test</div></div><span class="prog">20%</span></div>
+        <div class="grouphdr g-ready">✓ Ready to review · 1</div>
+        <div class="task"><span class="tdot d-ready"></span><div><div class="tt">Fix pagination bug</div><div class="ts">PR #214 · touches billing</div></div></div>
+        <div class="grouphdr g-done">Done / Blocked</div>
+        <div class="task"><span class="tdot d-blocked"></span><div><div class="tt">Upgrade deps</div><div class="ts">blocked · lockfile conflict</div></div></div>
+      </div>
+      <div class="tabs">
+        <div class="tab mic"><div class="ic"></div>Capture</div>
+        <div class="tab on"><div class="ic"></div>Tasks</div>
+        <div class="tab"><div class="ic"></div>Digest</div>
+        <div class="tab"><div class="ic"></div>Settings</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 7. TASK DETAIL -->
+  <div class="screen">
+    <div class="cap"><b>7 · Task Detail</b><small>Leads with "what I'm unsure about." Live progress. PR deep-links out — no code in-app.</small></div>
+    <div class="phone"><div class="notch"></div>
+      <div class="statusbar"><span>9:41</span><span class="r">●●● <span class="bar"></span></span></div>
+      <div class="backrow"><span class="x">←</span>Add retry logic<span style="margin-left:auto"><span class="dot d-running pulse"></span></span></div>
+      <div class="pad" style="padding:4px 20px 0"><div class="t2" style="font-size:12.5px">acme/payment-service · ⎇ fix/webhook-retry</div></div>
+      <div class="fill pad col" style="gap:18px;padding-top:16px;overflow:hidden">
+        <div class="card" style="border-color:rgba(245,166,35,.4)">
+          <div class="cap-label" style="color:var(--needsyou);margin-bottom:7px">⚠ Check this first</div>
+          <div style="font-size:14px;line-height:1.5">I set max-retries to <b>3</b> — you may want this in config rather than hardcoded.</div>
+        </div>
+        <div><div class="cap-label" style="margin-bottom:6px">Summary</div>
+          <div class="t2" style="font-size:13.5px;line-height:1.5">Added exponential backoff retry to the webhook handler, guarded to 5xx responses. Added a unit test.</div></div>
+        <div><div class="cap-label" style="margin-bottom:8px">Progress</div>
+          <div class="t2" style="font-size:13.5px;line-height:1.9">
+            <div><span style="color:var(--ready)">✓</span> spec confirmed</div>
+            <div><span style="color:var(--ready)">✓</span> edited webhook_handler.rb</div>
+            <div><span style="color:var(--running)" class="pulse">●</span> running tests… 8/10</div>
+          </div></div>
+        <div class="fill"></div>
+        <div class="btn btn-sec">💬 Reply with a change</div>
+        <div class="btn btn-pri" style="margin-top:10px;opacity:.5">Open PR — pending tests</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 8. DIGEST -->
+  <div class="screen">
+    <div class="cap"><b>8 · Morning Digest</b><small>Triaged: decisions first, then a prioritized review order, then blockers, then cost.</small></div>
+    <div class="phone"><div class="notch"></div>
+      <div class="statusbar"><span>7:30</span><span class="r">●●● <span class="bar"></span></span></div>
+      <div class="pad fill col" style="gap:14px;padding-top:26px;overflow:hidden">
+        <div style="font-size:22px;font-weight:800;letter-spacing:-.01em">Good morning ☕</div>
+        <div class="t2" style="font-size:13.5px;margin-top:-6px">While you slept, on 3 repos</div>
+        <div class="card" style="border-color:rgba(245,166,35,.35)">
+          <div class="row" style="gap:9px"><span class="dot d-needsyou"></span><b style="font-size:14.5px">1 needs a decision</b></div>
+          <div class="t2" style="font-size:13px;margin-top:8px;line-height:1.5">Rename exports — pick the migration direction before I proceed.</div>
+        </div>
+        <div class="card">
+          <div class="row" style="gap:9px"><span class="dot d-ready"></span><b style="font-size:14.5px">3 ready to review</b></div>
+          <div class="t2" style="font-size:13px;margin-top:8px;line-height:1.5">Review <b style="color:var(--text)">"Fix pagination"</b> first — it touches billing.</div>
+        </div>
+        <div class="card">
+          <div class="row" style="gap:9px"><span class="dot d-blocked"></span><b style="font-size:14.5px">1 blocked</b></div>
+          <div class="t2" style="font-size:13px;margin-top:8px;line-height:1.5">Upgrade deps — lockfile conflict, needs a hand.</div>
+        </div>
+        <div class="fill"></div>
+        <div class="row" style="justify-content:space-between;font-size:12.5px;color:var(--muted);border-top:1px solid var(--border);padding-top:14px">
+          <span>spent overnight</span><span>320k tokens · ~$4.10</span>
+        </div>
+      </div>
+      <div class="tabs">
+        <div class="tab mic"><div class="ic"></div>Capture</div>
+        <div class="tab"><div class="ic"></div>Tasks</div>
+        <div class="tab on"><div class="ic"></div>Digest</div>
+        <div class="tab"><div class="ic"></div>Settings</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 9. SETTINGS -->
+  <div class="screen">
+    <div class="cap"><b>9 · Settings</b><small>Runners, notifications, defaults (autonomy stays "Draft only" for MVP).</small></div>
+    <div class="phone"><div class="notch"></div>
+      <div class="statusbar"><span>9:41</span><span class="r">●●● <span class="bar"></span></span></div>
+      <div class="backrow">Settings</div>
+      <div class="fill pad col" style="padding-top:4px;gap:0;overflow:hidden">
+        <div class="cap-label" style="margin:8px 0 4px">Runners</div>
+        <div class="listitem"><span class="dot d-ready"></span><div><div class="tt" style="font-size:14px">MacBook Pro</div><div class="ts">connected · ~/dispatch</div></div></div>
+        <div class="listitem t2" style="color:var(--accent);border:none">+ Pair another machine</div>
+        <div class="cap-label" style="margin:18px 0 4px">Notifications</div>
+        <div class="listitem"><div class="fill">Push</div><span class="t2">On</span></div>
+        <div class="listitem"><div class="fill">Digest time</div><span class="t2">7:30 AM</span></div>
+        <div class="listitem"><div class="fill">Quiet hours</div><span class="t2">10p – 7a</span></div>
+        <div class="cap-label" style="margin:18px 0 4px">Defaults</div>
+        <div class="listitem"><div class="fill">Autonomy</div><span class="t2">Draft only</span></div>
+        <div class="listitem"><div class="fill">Task budget</div><span class="t2">250k tokens</span></div>
+        <div class="cap-label" style="margin:18px 0 4px">Account</div>
+        <div class="listitem"><div class="fill">GitHub</div><span class="t2">flow6979</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 10. RUNNER MENUBAR -->
+  <div class="screen">
+    <div class="cap"><b>10 · Laptop Runner (menubar)</b><small>Runs invisibly. Shows connection, current task, workspace, keep-awake.</small></div>
+    <div style="height:96px"></div>
+    <div class="menubar">
+      <div class="mb-row head">⎇ Dispatch</div>
+      <div class="mb-row"><span class="dot d-ready"></span>Connected · flow6979</div>
+      <div class="mb-row"><span class="dot d-running pulse"></span>Now: Add retry logic · 60%</div>
+      <div class="mb-row t2" style="font-size:12px">Workspace: ~/dispatch</div>
+      <div class="mb-row act">Keep awake while running<span class="chk">✓</span></div>
+      <div class="mb-row act">Pause new tasks</div>
+      <div class="mb-row act">View logs…</div>
+      <div class="mb-row act">Quit</div>
+    </div>
+    <div class="cap" style="margin-top:20px;max-width:300px"><small>The whole runner surface — everything else happens headless via the authenticated <code style="color:var(--ready)">claude</code> CLI.</small></div>
+  </div>
+
+</div>
+</body>
+</html>

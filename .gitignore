@@ -1,0 +1,25 @@
+# deps
+node_modules/
+**/node_modules/
+
+# expo / native build
+.expo/
+**/.expo/
+dist/
+web-build/
+*.apk
+*.aab
+android/
+ios/
+
+# backend runtime data
+backend/data.json
+backend/*.db
+
+# logs & os
+*.log
+.DS_Store
+
+# env / secrets
+.env
+.env.local

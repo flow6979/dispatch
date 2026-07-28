@@ -1,0 +1,43 @@
+{
+  "expo": {
+    "name": "Dispatch",
+    "slug": "dispatch",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "dispatch",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0E0F13",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.flow6979.dispatch"
+    },
+    "android": {
+      "package": "com.flow6979.dispatch",
+      "versionCode": 1,
+      "permissions": ["INTERNET", "ACCESS_NETWORK_STATE"],
+      "adaptiveIcon": {
+        "backgroundColor": "#0E0F13",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      }
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single",
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ]
+    ]
+  }
+}
