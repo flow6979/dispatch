@@ -33,7 +33,23 @@ const { nanoid } = require('nanoid');
 // Configuration (all overridable via env, per PROTOCOL "Ports & scripts")
 // ---------------------------------------------------------------------------
 
-const BACKEND_HOST = process.env.DISPATCH_BACKEND || 'localhost:4000';
+// DISPATCH_BACKEND may be a bare host ("localhost:4000") or a full origin
+// ("https://dispatch-backend.onrender.com"). Derive the ws/wss scheme from it
+// so a hosted HTTPS backend uses a secure socket.
+const RAW_BACKEND = process.env.DISPATCH_BACKEND || 'localhost:4000';
+let WS_SECURE = false;
+let BACKEND_HOST = RAW_BACKEND;
+{
+  const m = RAW_BACKEND.match(/^(https?|wss?):\/\/(.+)$/);
+  if (m) {
+    WS_SECURE = m[1] === 'https' || m[1] === 'wss';
+    BACKEND_HOST = m[2];
+  } else if (process.env.DISPATCH_SECURE === '1') {
+    WS_SECURE = true;
+  }
+  BACKEND_HOST = BACKEND_HOST.replace(/\/+$/, '');
+}
+const WS_SCHEME = WS_SECURE ? 'wss' : 'ws';
 const TOKEN = 'dev-token';
 const RUNNER_NAME = process.env.RUNNER_NAME || os.hostname();
 
@@ -530,7 +546,7 @@ async function handleRunTask(msg, emit, sleep) {
 
 function startWsClient() {
   const WebSocket = require('ws');
-  const url = `ws://${BACKEND_HOST}/ws?role=runner&token=${TOKEN}`;
+  const url = `${WS_SCHEME}://${BACKEND_HOST}/ws?role=runner&token=${TOKEN}`;
   let backoff = 1000;
   const MAX_BACKOFF = 30000;
   let ws = null;
