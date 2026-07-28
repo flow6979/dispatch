@@ -11,13 +11,16 @@ import {
 import { router } from 'expo-router';
 import { C, statusOf } from '../../src/theme';
 import { StatusBarFaux, ContextBar, TaskRow } from '../../src/components';
-import { CapLabel, OfflineBanner } from '../../src/ui';
-import { useTasks, useContext } from '../../src/hooks';
+import { CapLabel, OfflineBanner, NoRunnerBanner } from '../../src/ui';
+import { useTasks, useContext, useHealth } from '../../src/hooks';
 import { api } from '../../src/api';
 
 export default function Capture() {
   const { tasks, offline, refresh } = useTasks();
   const { context } = useContext();
+  const { health } = useHealth();
+  const noRunner = !offline && (health?.runners ?? 0) === 0;
+  const hasRepo = !!context?.repo;
   const [text, setText] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [listening, setListening] = useState(false);
@@ -52,6 +55,7 @@ export default function Capture() {
     <View style={styles.screen}>
       <StatusBarFaux />
       <OfflineBanner visible={offline} />
+      <NoRunnerBanner visible={noRunner} />
       <ContextBar context={context} offline={offline} />
 
       <View style={styles.captureArea}>
@@ -89,6 +93,13 @@ export default function Capture() {
             )}
           </Pressable>
         </View>
+        {!hasRepo && (
+          <Pressable onPress={() => router.push('/repo-picker')}>
+            <Text style={styles.repoHint}>
+              No repo selected — tap to choose one so tasks can run.
+            </Text>
+          </Pressable>
+        )}
       </View>
 
       <View style={styles.divider} />
@@ -150,6 +161,7 @@ const styles = StyleSheet.create({
     borderBottomRightRadius: 16,
   },
   hint: { fontSize: 14, color: C.text2 },
+  repoHint: { fontSize: 12.5, color: C.needsyou, textAlign: 'center', marginTop: 4 },
   inputRow: { flexDirection: 'row', alignItems: 'center', gap: 10, width: '100%' },
   input: {
     flex: 1,

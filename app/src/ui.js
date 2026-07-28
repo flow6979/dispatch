@@ -59,6 +59,18 @@ export function OfflineBanner({ visible }) {
   );
 }
 
+export function NoRunnerBanner({ visible }) {
+  if (!visible) return null;
+  return (
+    <View style={styles.warn}>
+      <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: C.needsyou }} />
+      <Text style={styles.warnTxt}>
+        No runner connected — start your laptop runner or tasks will wait.
+      </Text>
+    </View>
+  );
+}
+
 export function Meter({ value = 0, color = C.needsyou }) {
   const pct = Math.max(0, Math.min(1, value));
   return (
@@ -107,6 +119,17 @@ const styles = StyleSheet.create({
     borderBottomColor: C.border,
   },
   offlineTxt: { color: C.muted, fontSize: 12 },
+  warn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    backgroundColor: 'rgba(245,166,35,0.12)',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(245,166,35,0.3)',
+  },
+  warnTxt: { color: C.needsyou, fontSize: 12, flex: 1 },
   meter: {
     flex: 1,
     height: 6,

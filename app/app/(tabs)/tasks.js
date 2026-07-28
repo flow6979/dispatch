@@ -9,6 +9,7 @@ import { useTasks } from '../../src/hooks';
 const GROUPS = [
   { key: 'needsyou', title: 'Needs you', glyph: '⚠', color: C.needsyou },
   { key: 'running', title: 'Running', glyph: '●', color: C.running },
+  { key: 'queued', title: 'Queued', glyph: '•', color: C.queued },
   { key: 'ready', title: 'Ready to review', glyph: '✓', color: C.ready },
   { key: 'blocked', title: 'Done / Blocked', glyph: '', color: C.muted },
 ];
@@ -21,8 +22,6 @@ export default function TaskBoard() {
     const s = statusOf(t.state);
     (buckets[s] || buckets.blocked).push(t);
   });
-  // queued tasks fold into blocked/done group tail (nothing needs the user)
-  buckets.blocked = buckets.blocked.concat(buckets.queued);
 
   const anything = tasks.length > 0;
 

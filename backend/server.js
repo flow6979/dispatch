@@ -174,10 +174,7 @@ function scheduleAutoProceed(task) {
   }, AUTO_PROCEED_MS);
 }
 
-function proceedToRun(task) {
-  task.state = 'SPEC_CONFIRMED';
-  task._autoProceedAt = null;
-  touchTask(task);
+function sendRunTask(task) {
   sendToRunner({
     type: 'run_task',
     taskId: task.id,
@@ -190,6 +187,46 @@ function proceedToRun(task) {
   });
 }
 
+function proceedToRun(task) {
+  task.state = 'SPEC_CONFIRMED';
+  task._autoProceedAt = null;
+  touchTask(task);
+  sendRunTask(task);
+}
+
+/**
+ * Re-drive tasks that got stranded because no runner was connected when their
+ * work was dispatched. Called whenever a runner (re)registers, and also on
+ * boot. Idempotent: each state is nudged back onto its next hop.
+ *   - CAPTURED       → ask the runner for a spec again
+ *   - SPEC_DRAFTED   → re-arm the auto-proceed timer (timers die on restart)
+ *   - SPEC_CONFIRMED → re-send run_task (the original may have been dropped)
+ * Terminal/HELD tasks are left untouched.
+ */
+function resumeStuckTasks() {
+  if (runners.size === 0) return;
+  let resumed = 0;
+  for (const task of Object.values(store.tasks)) {
+    switch (task.state) {
+      case 'CAPTURED':
+        requestSpec(task);
+        resumed++;
+        break;
+      case 'SPEC_DRAFTED':
+        scheduleAutoProceed(task);
+        resumed++;
+        break;
+      case 'SPEC_CONFIRMED':
+        sendRunTask(task);
+        resumed++;
+        break;
+      default:
+        break;
+    }
+  }
+  if (resumed) console.log(`[runner] resumed ${resumed} stranded task(s)`);
+}
+
 // ---------------------------------------------------------------------------
 // Runner message handling
 // ---------------------------------------------------------------------------
@@ -200,6 +237,11 @@ function handleRunnerMessage(entry, msg) {
       entry.runnerName = msg.runnerName || 'runner';
       console.log('[runner] registered:', entry.runnerName, msg.capabilities || []);
       broadcastRunnerStatus(true, entry.runnerName);
+      // Self-heal: re-drive any tasks that were left mid-flight because no
+      // runner was connected when they were created/confirmed. Without this,
+      // a task captured while the laptop runner is offline stays CAPTURED
+      // forever even after a runner comes online.
+      resumeStuckTasks();
       break;
     }
     case 'spec_result': {
@@ -383,9 +425,18 @@ async function build() {
     if (task.state === 'SPEC_DRAFTED') {
       proceedToRun(task);
     } else if (task.state === 'CAPTURED') {
-      // Spec not ready yet; mark intent so auto-proceed still fires once drafted.
-      // We simply proceed as soon as we can — leave CAPTURED, runner spec_result
-      // will draft it and auto-proceed timer will run it. Nothing else to do.
+      // Spec not ready yet (likely the generate_spec was dropped because no
+      // runner was connected at capture). Re-request it now; when spec_result
+      // arrives the auto-proceed timer runs the task automatically.
+      requestSpec(task);
+    } else if (task.state === 'HELD') {
+      // Un-hold and resume from wherever we can.
+      if (task.spec) proceedToRun(task);
+      else {
+        task.state = 'CAPTURED';
+        touchTask(task);
+        requestSpec(task);
+      }
     }
     return { task };
   });
