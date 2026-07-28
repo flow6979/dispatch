@@ -244,6 +244,20 @@ function handleRunnerMessage(entry, msg) {
       resumeStuckTasks();
       break;
     }
+    case 'repos': {
+      // Runner (which has the operator's gh auth) supplied the real repo list.
+      // Prefer it over the hosted backend's own gh/stub fallback.
+      if (Array.isArray(msg.repos) && msg.repos.length) {
+        reposCache = msg.repos.map((r) => ({
+          name: r.name,
+          defaultBranch: r.defaultBranch || 'main',
+          pinned: false,
+          recent: false,
+        }));
+        console.log(`[repos] received ${reposCache.length} repo(s) from runner ${entry.runnerName}`);
+      }
+      break;
+    }
     case 'spec_result': {
       const task = store.tasks[msg.taskId];
       if (!task) {

@@ -249,6 +249,26 @@ function run(cmd, args, { cwd, timeoutMs = 120000, env } = {}) {
   });
 }
 
+/**
+ * Fetch the operator's real GitHub repos via the laptop's authed `gh`.
+ * The hosted backend has no gh auth, so it relies on the runner for this.
+ * Best-effort: returns [] on any failure (backend keeps its stub fallback).
+ */
+async function fetchRepos() {
+  if (!hasBinary('gh')) return [];
+  try {
+    const out = await run('gh', ['repo', 'list', '--limit', '50', '--json', 'name,defaultBranchRef'], { timeoutMs: 20000 });
+    const parsed = JSON.parse(out);
+    return parsed.map((r) => ({
+      name: r.name,
+      defaultBranch: (r.defaultBranchRef && r.defaultBranchRef.name) || 'main',
+    }));
+  } catch (err) {
+    log('fetchRepos failed (continuing without real repo list):', err.message);
+    return [];
+  }
+}
+
 /** Synchronous check whether a binary exists on PATH. */
 function hasBinary(name) {
   const res = spawnSync(process.platform === 'win32' ? 'where' : 'which', [name], {
@@ -568,6 +588,14 @@ function startWsClient() {
       backoff = 1000; // reset on successful connect
       log('connected; registering');
       emit({ type: 'register', runnerName: RUNNER_NAME, capabilities: ['git', 'gh', 'claude'] });
+      // Push the operator's real repo list to the backend (it has no gh auth).
+      // Async so registration/connect isn't blocked on the gh call.
+      fetchRepos().then((repos) => {
+        if (repos.length) {
+          log(`sending ${repos.length} repo(s) to backend`);
+          emit({ type: 'repos', repos });
+        }
+      });
     });
 
     ws.on('message', async (data) => {
