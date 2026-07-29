@@ -960,6 +960,7 @@ async function handleRunTask(msg, emit, sleep) {
 function startWsClient() {
   const WebSocket = require('ws');
   let backoff = 1000;
+  let askedPairing = false; // print a pairing code once per process
   const MAX_BACKOFF = 30000;
   let ws = null;
   let stopping = false;
@@ -1014,6 +1015,8 @@ function startWsClient() {
         alive = false;
         try { ws.ping(); } catch (_) { /* ignore */ }
       }, HEARTBEAT_MS);
+      // Ask the backend for a pairing code to show the user (once per run).
+      if (!askedPairing) { askedPairing = true; emit({ type: 'request_pairing' }); }
       // Offer our durable state mirror in case the backend booted empty
       // (Render wiped its disk). Backend only adopts it if it has no data.
       const mirror = readStateMirror();
@@ -1049,6 +1052,9 @@ function startWsClient() {
         } else if (msg.type === 'state_backup') {
           // Backend is mirroring its state to us for safekeeping.
           if (msg.state) saveStateMirror(msg.state);
+        } else if (msg.type === 'pairing_code') {
+          const mins = Math.round((msg.ttlSec || 1800) / 60);
+          log(`\n\n  ┌──────────────────────────────────────────────┐\n  │  📱 Connect a phone to Dispatch                │\n  │  Pairing code:  ${msg.code}                     │\n  │  Enter this in the app (valid ${mins} min).        │\n  └──────────────────────────────────────────────┘\n`);
         } else if (msg.type === 'device_token') {
           // We were approved and issued a per-device token; use it hereafter.
           if (msg.token) { saveDeviceToken(msg.token); log('received per-device token; saved'); }

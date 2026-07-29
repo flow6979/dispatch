@@ -124,6 +124,30 @@ function bearerOf(req) {
   return m ? m[1].trim() : null;
 }
 
+// Short-lived pairing codes: a connected device mints one, the user pastes it
+// into a new device to connect it — no shared secret needed on the new device.
+const pairingCodes = new Map(); // CODE -> expiresAtMs
+const PAIRING_TTL_MS = 30 * 60 * 1000;
+const codeAlphabet = () => {
+  const A = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // no ambiguous 0/O/1/I/L
+  const { customAlphabet } = require('nanoid');
+  return customAlphabet(A, 8)();
+};
+function mintPairingCode() {
+  const raw = codeAlphabet();
+  const code = raw.slice(0, 4) + '-' + raw.slice(4); // XXXX-XXXX
+  pairingCodes.set(code.toUpperCase(), now() + PAIRING_TTL_MS);
+  return code;
+}
+function consumePairingCode(code) {
+  if (!code) return false;
+  const key = String(code).trim().toUpperCase();
+  const exp = pairingCodes.get(key);
+  if (!exp) return false;
+  pairingCodes.delete(key); // one-time use
+  return exp > now();
+}
+
 const TERMINAL_STATES = new Set([
   'PR_OPEN',
   'AWAITING_REVIEW',
@@ -410,6 +434,12 @@ function handleRunnerMessage(entry, msg) {
       }
       break;
     }
+    case 'request_pairing': {
+      // Runner wants a pairing code to show the user for connecting a phone.
+      const code = mintPairingCode();
+      safeSend(entry.socket, { type: 'pairing_code', code, ttlSec: Math.round(PAIRING_TTL_MS / 1000) });
+      break;
+    }
     case 'repos': {
       // Runner (which has the operator's gh auth) supplied the real repo list.
       // Prefer it over the hosted backend's own gh/stub fallback.
@@ -545,7 +575,7 @@ async function build() {
 
   // Auth gate for REST. Health (keep-warm) and enroll (bootstrap) are open;
   // everything else needs the shared secret or a per-device token.
-  const OPEN_ROUTES = new Set(['/api/health', '/api/enroll']);
+  const OPEN_ROUTES = new Set(['/api/health', '/api/enroll', '/api/pair']);
   app.addHook('onRequest', async (req, reply) => {
     if (!req.url.startsWith('/api/')) return; // /ws handled separately
     const path = req.url.split('?')[0];
@@ -570,6 +600,30 @@ async function build() {
       kind: body.kind === 'runner' ? 'runner' : 'phone',
       id: body.deviceId || null,
       label: body.label || null,
+      createdAt: now(),
+    };
+    saveStore();
+    return { token };
+  });
+
+  // Mint a pairing code (requires an already-authorized device).
+  app.post('/api/pairing/new', async () => {
+    const code = mintPairingCode();
+    return { code, ttlSec: Math.round(PAIRING_TTL_MS / 1000) };
+  });
+
+  // Redeem a pairing code for a per-device token (open — that's the point).
+  app.post('/api/pair', async (req, reply) => {
+    const body = req.body || {};
+    if (!consumePairingCode(body.code)) {
+      reply.code(403);
+      return { error: 'bad_or_expired_code' };
+    }
+    const token = genToken();
+    store.deviceTokens[token] = {
+      kind: 'phone',
+      id: body.deviceId || null,
+      label: body.label || 'paired device',
       createdAt: now(),
     };
     saveStore();
