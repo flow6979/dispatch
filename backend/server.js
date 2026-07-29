@@ -64,6 +64,25 @@ function saveStore() {
   } catch (err) {
     console.error('[store] failed to write data.json:', err.message);
   }
+  // Also mirror to the laptop runner (durable disk) so state survives Render's
+  // ephemeral-filesystem wipes on redeploy/restart.
+  scheduleStateBackup();
+}
+
+// Debounced push of the full store to the connected runner for safekeeping.
+let _backupTimer = null;
+function scheduleStateBackup() {
+  if (_backupTimer) return;
+  _backupTimer = setTimeout(() => {
+    _backupTimer = null;
+    const live = liveRunnerEntry();
+    if (!live) return;
+    safeSend(live.socket, {
+      type: 'state_backup',
+      savedAt: now(),
+      state: { tasks: store.tasks, context: store.context, pairedRunners: store.pairedRunners },
+    });
+  }, 500);
 }
 
 // ---------------------------------------------------------------------------
@@ -111,6 +130,7 @@ function newTask({ promptText, repo, baseBranch, workBranch }) {
     prUrl: null,
     progress: [],
     tokensUsed: 0,
+    costUsd: 0,
     budgetTokens: DEFAULT_BUDGET_TOKENS,
     createdAt: ts,
     updatedAt: ts,
@@ -304,6 +324,28 @@ function handleRunnerMessage(entry, msg) {
       if (approved) resumeStuckTasks();
       break;
     }
+    case 'state_restore': {
+      // Runner is offering its saved mirror of our state. Only adopt it if we
+      // booted empty (i.e. Render just wiped our disk) so we never clobber
+      // live data during a normal reconnect.
+      const s = msg.state || {};
+      const fresh =
+        Object.keys(store.tasks).length === 0 &&
+        Object.keys(store.pairedRunners).length === 0;
+      if (fresh && (s.tasks || s.pairedRunners)) {
+        if (s.tasks && typeof s.tasks === 'object') store.tasks = s.tasks;
+        if (s.context) store.context = s.context;
+        if (s.pairedRunners && typeof s.pairedRunners === 'object') store.pairedRunners = s.pairedRunners;
+        saveStore();
+        console.log(
+          `[state] restored from runner backup: ${Object.keys(store.tasks).length} tasks, ${Object.keys(store.pairedRunners).length} paired`,
+        );
+        broadcastRunnerStatus(); // this runner may now be approved
+        broadcastTasksUpdate();
+        resumeStuckTasks(); // finish anything left mid-flight
+      }
+      break;
+    }
     case 'repos': {
       // Runner (which has the operator's gh auth) supplied the real repo list.
       // Prefer it over the hosted backend's own gh/stub fallback.
@@ -338,6 +380,7 @@ function handleRunnerMessage(entry, msg) {
       }
       if (msg.state) task.state = msg.state;
       if (typeof msg.tokensUsed === 'number') task.tokensUsed = msg.tokensUsed;
+      if (typeof msg.costUsd === 'number') task.costUsd = msg.costUsd;
       task.progress.push({
         ts: now(),
         state: msg.state || task.state,
@@ -357,6 +400,7 @@ function handleRunnerMessage(entry, msg) {
       if (msg.prUrl !== undefined) task.prUrl = msg.prUrl;
       if (msg.summary !== undefined) task.summary = msg.summary;
       if (typeof msg.tokensUsed === 'number') task.tokensUsed = msg.tokensUsed;
+      if (typeof msg.costUsd === 'number') task.costUsd = msg.costUsd;
       task.progress.push({
         ts: now(),
         state: task.state,

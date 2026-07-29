@@ -74,6 +74,27 @@ const WORKSPACE = process.env.WORKSPACE
   ? expandHome(process.env.WORKSPACE)
   : path.join(os.homedir(), 'dispatch-workspace');
 
+// Durable local mirror of the backend's state. The hosted backend has an
+// ephemeral disk (wiped on redeploy); the laptop does not, so we keep a copy
+// here and hand it back when the backend reconnects empty.
+const STATE_DIR = path.join(os.homedir(), '.dispatch');
+const STATE_FILE = path.join(STATE_DIR, 'state.json');
+
+function saveStateMirror(state) {
+  try {
+    fs.mkdirSync(STATE_DIR, { recursive: true });
+    fs.writeFileSync(STATE_FILE + '.tmp', JSON.stringify({ savedAt: Date.now(), state }));
+    fs.renameSync(STATE_FILE + '.tmp', STATE_FILE); // atomic
+  } catch (_) { /* best-effort */ }
+}
+
+function readStateMirror() {
+  try {
+    if (fs.existsSync(STATE_FILE)) return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+  } catch (_) { /* ignore */ }
+  return null;
+}
+
 // Budget: wall-clock ceiling for a REAL task and a default token budget.
 const DEFAULT_BUDGET_TOKENS = 250000;
 const REAL_WALL_CLOCK_MS = Number(process.env.DISPATCH_WALL_MS || 20 * 60 * 1000); // 20 min
@@ -279,6 +300,7 @@ function runClaudeStream(prompt, { cwd, timeoutMs = 120000, onActivity } = {}) {
     let stderr = '';
     let finalText = '';
     let tokens = 0;
+    let costUsd = 0;
     let done = false;
     const finish = (fn, arg) => { if (done) return; done = true; clearTimeout(timer); try { child.kill('SIGKILL'); } catch (_) {} fn(arg); };
     const timer = setTimeout(() => finish(reject, new Error(`claude timed out after ${timeoutMs}ms`)), timeoutMs);
@@ -297,6 +319,7 @@ function runClaudeStream(prompt, { cwd, timeoutMs = 120000, onActivity } = {}) {
           const u = evt.usage || {};
           tokens = (u.input_tokens || 0) + (u.output_tokens || 0) +
                    (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0);
+          if (typeof evt.total_cost_usd === 'number') costUsd = evt.total_cost_usd;
           if (typeof evt.result === 'string') finalText = evt.result;
         }
       } catch (_) { /* ignore a bad event */ }
@@ -315,7 +338,7 @@ function runClaudeStream(prompt, { cwd, timeoutMs = 120000, onActivity } = {}) {
     child.stderr.on('data', (d) => { stderr += d.toString(); });
     child.on('error', (err) => finish(reject, new Error(`claude spawn failed: ${err.message}`)));
     child.on('close', (code) => {
-      if (code === 0) finish(resolve, { text: finalText, tokens });
+      if (code === 0) finish(resolve, { text: finalText, tokens, costUsd });
       else finish(reject, new Error(`claude exited ${code}: ${stderr.trim().slice(0, 200)}`));
     });
   });
@@ -540,6 +563,7 @@ async function runTaskReal(task, emit) {
       return fail('FAILED', 'claude CLI not found on PATH.');
     }
     let tokensUsed = 0;
+    let costUsd = 0;
     try {
       // Stream Claude's actions live: log each one and push it to the phone so
       // you can watch what it's doing (writing files, running commands, etc.).
@@ -557,7 +581,8 @@ async function runTaskReal(task, emit) {
         },
       });
       tokensUsed = res.tokens || 0;
-      emit({ type: 'progress', taskId, state: 'RUNNING', message: `claude finished (${tokensUsed.toLocaleString()} tokens)`, pct: 68, tokensUsed });
+      costUsd = res.costUsd || 0;
+      emit({ type: 'progress', taskId, state: 'RUNNING', message: `claude finished (${tokensUsed.toLocaleString()} tokens · $${costUsd.toFixed(2)})`, pct: 68, tokensUsed, costUsd });
     } catch (err) {
       return fail('FAILED', `claude edit step failed: ${err.message}`);
     }
@@ -614,6 +639,7 @@ async function runTaskReal(task, emit) {
       state: 'PR_OPEN',
       prUrl,
       tokensUsed,
+      costUsd,
       summary: confidenceSummary(
         spec,
         `Draft PR opened at ${prUrl}. Tests: ${testResult.ran ? (testResult.passed ? 'passed' : 'failed') : 'none detected'}. Used ~${tokensUsed.toLocaleString()} tokens.`,
@@ -747,6 +773,13 @@ function startWsClient() {
         alive = false;
         try { ws.ping(); } catch (_) { /* ignore */ }
       }, HEARTBEAT_MS);
+      // Offer our durable state mirror in case the backend booted empty
+      // (Render wiped its disk). Backend only adopts it if it has no data.
+      const mirror = readStateMirror();
+      if (mirror && mirror.state) {
+        log('offering saved state backup to backend');
+        emit({ type: 'state_restore', state: mirror.state, savedAt: mirror.savedAt });
+      }
       // Push the operator's real repo list to the backend (it has no gh auth).
       // Async so registration/connect isn't blocked on the gh call.
       fetchRepos().then((repos) => {
@@ -772,6 +805,9 @@ function startWsClient() {
         } else if (msg.type === 'run_task') {
           log(`run_task task=${msg.taskId} (${STUB_MODE ? 'STUB' : 'REAL'})`);
           await handleRunTask(msg, emit);
+        } else if (msg.type === 'state_backup') {
+          // Backend is mirroring its state to us for safekeeping.
+          if (msg.state) saveStateMirror(msg.state);
         } else {
           log('unhandled message type:', msg.type);
         }
