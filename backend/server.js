@@ -405,6 +405,7 @@ function handleRunnerMessage(entry, msg) {
         );
         broadcastRunnerStatus(); // this runner may now be approved
         broadcastTasksUpdate();
+        ensureRunnerToken(entry); // approved via restore → hand it a token
         resumeStuckTasks(); // finish anything left mid-flight
       }
       break;
