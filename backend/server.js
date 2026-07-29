@@ -155,6 +155,14 @@ function pairedRunnerEntries() {
   return [...runners].filter((e) => e.runnerId && store.pairedRunners[e.runnerId]);
 }
 
+// Prefer an approved runner whose socket is actually OPEN. During a runner
+// restart two entries can briefly coexist (the dead half-open one + the fresh
+// one); sending to the dead socket silently drops the message.
+function liveRunnerEntry() {
+  const paired = pairedRunnerEntries();
+  return paired.find((e) => e.socket && e.socket.readyState === 1) || paired[0] || null;
+}
+
 function runnersPublic() {
   return [...runners].map((e) => ({
     id: e.runnerId || null,
@@ -177,9 +185,9 @@ function broadcastRunnerStatus() {
 }
 
 function sendToRunner(obj) {
-  // Only dispatch to an APPROVED runner. A connected-but-unapproved machine is
-  // ignored until the user pairs it from the phone.
-  const first = pairedRunnerEntries()[0];
+  // Only dispatch to an APPROVED runner with a live socket. A connected-but-
+  // unapproved machine is ignored until the user pairs it from the phone.
+  const first = liveRunnerEntry();
   if (first) {
     safeSend(first.socket, obj);
     return true;

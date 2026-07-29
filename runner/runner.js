@@ -247,6 +247,80 @@ async function runClaudeJson(prompt, { cwd, timeoutMs = 120000 } = {}) {
   }
 }
 
+/** One-line human label for a tool_use so it's readable in logs / on the phone. */
+function describeToolUse(name, input) {
+  const i = input || {};
+  const f = i.file_path || i.path || i.notebook_path;
+  const rel = f ? String(f).split('/').slice(-2).join('/') : null;
+  switch (name) {
+    case 'Write': return `writing ${rel || 'a file'}`;
+    case 'Edit':
+    case 'MultiEdit': return `editing ${rel || 'a file'}`;
+    case 'Read': return `reading ${rel || 'a file'}`;
+    case 'Bash': return `running: ${String(i.command || '').slice(0, 60)}`;
+    case 'Glob':
+    case 'Grep': return `searching ${i.pattern ? `"${String(i.pattern).slice(0, 40)}"` : 'the repo'}`;
+    case 'TodoWrite': return 'planning next steps';
+    default: return name ? `using ${name}` : 'working';
+  }
+}
+
+/**
+ * Run claude in STREAMING mode and surface every step. Reads the stream-json
+ * NDJSON output line-by-line; for each assistant text / tool_use it calls
+ * onActivity({kind, label, detail}) so the caller can log it and push it to
+ * the phone. Resolves { text, tokens } from the terminal `result` event.
+ */
+function runClaudeStream(prompt, { cwd, timeoutMs = 120000, onActivity } = {}) {
+  return new Promise((resolve, reject) => {
+    const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose'];
+    const child = spawn('claude', args, { cwd, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let buf = '';
+    let stderr = '';
+    let finalText = '';
+    let tokens = 0;
+    let done = false;
+    const finish = (fn, arg) => { if (done) return; done = true; clearTimeout(timer); try { child.kill('SIGKILL'); } catch (_) {} fn(arg); };
+    const timer = setTimeout(() => finish(reject, new Error(`claude timed out after ${timeoutMs}ms`)), timeoutMs);
+
+    function handle(evt) {
+      try {
+        if (evt.type === 'assistant') {
+          for (const b of (evt.message && evt.message.content) || []) {
+            if (b.type === 'text' && b.text && b.text.trim()) {
+              onActivity && onActivity({ kind: 'thought', label: b.text.trim().slice(0, 80) });
+            } else if (b.type === 'tool_use') {
+              onActivity && onActivity({ kind: 'action', label: describeToolUse(b.name, b.input) });
+            }
+          }
+        } else if (evt.type === 'result') {
+          const u = evt.usage || {};
+          tokens = (u.input_tokens || 0) + (u.output_tokens || 0) +
+                   (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0);
+          if (typeof evt.result === 'string') finalText = evt.result;
+        }
+      } catch (_) { /* ignore a bad event */ }
+    }
+
+    child.stdout.on('data', (d) => {
+      buf += d.toString();
+      let nl;
+      while ((nl = buf.indexOf('\n')) !== -1) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line) continue;
+        try { handle(JSON.parse(line)); } catch (_) { /* partial/non-JSON */ }
+      }
+    });
+    child.stderr.on('data', (d) => { stderr += d.toString(); });
+    child.on('error', (err) => finish(reject, new Error(`claude spawn failed: ${err.message}`)));
+    child.on('close', (code) => {
+      if (code === 0) finish(resolve, { text: finalText, tokens });
+      else finish(reject, new Error(`claude exited ${code}: ${stderr.trim().slice(0, 200)}`));
+    });
+  });
+}
+
 /** Generic command runner. Resolves {stdout} on exit 0, rejects otherwise. */
 function run(cmd, args, { cwd, timeoutMs = 120000, env } = {}) {
   return new Promise((resolve, reject) => {
@@ -467,9 +541,23 @@ async function runTaskReal(task, emit) {
     }
     let tokensUsed = 0;
     try {
-      const res = await runClaudeJson(claudePrompt, { cwd: worktreeDir, timeoutMs: Math.min(timeLeft(), 15 * 60 * 1000) });
+      // Stream Claude's actions live: log each one and push it to the phone so
+      // you can watch what it's doing (writing files, running commands, etc.).
+      let step = 0;
+      const res = await runClaudeStream(claudePrompt, {
+        cwd: worktreeDir,
+        timeoutMs: Math.min(timeLeft(), 15 * 60 * 1000),
+        onActivity: (a) => {
+          const glyph = a.kind === 'action' ? '🔧' : '💭';
+          log(`claude ${a.kind}: ${a.label}`);
+          // Ramp the % from 40→68 across steps so the bar advances as it works.
+          step += 1;
+          const pct = Math.min(68, 40 + step);
+          emit({ type: 'progress', taskId, state: 'RUNNING', message: `${glyph} ${a.label}`, pct });
+        },
+      });
       tokensUsed = res.tokens || 0;
-      emit({ type: 'progress', taskId, state: 'RUNNING', message: `claude made changes (${tokensUsed.toLocaleString()} tokens)`, pct: 60, tokensUsed });
+      emit({ type: 'progress', taskId, state: 'RUNNING', message: `claude finished (${tokensUsed.toLocaleString()} tokens)`, pct: 68, tokensUsed });
     } catch (err) {
       return fail('FAILED', `claude edit step failed: ${err.message}`);
     }
@@ -828,6 +916,8 @@ module.exports = {
   normalizeSpec,
   extractJson,
   generateSpec,
+  runClaudeStream,
+  describeToolUse,
   runTaskStub,
   runTaskReal,
   confidenceSummary,
