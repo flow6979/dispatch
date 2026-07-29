@@ -245,6 +245,21 @@ function broadcastRunnerStatus() {
   for (const sock of phones) safeSend(sock, payload);
 }
 
+// Ensure an approved runner has a per-device token; mint + hand it over the
+// socket if missing. Used from both explicit approval and re-register.
+function ensureRunnerToken(entry) {
+  if (!entry || !entry.runnerId || !store.pairedRunners[entry.runnerId]) return;
+  let token = Object.keys(store.deviceTokens).find(
+    (t) => store.deviceTokens[t].kind === 'runner' && store.deviceTokens[t].id === entry.runnerId,
+  );
+  if (!token) {
+    token = genToken();
+    store.deviceTokens[token] = { kind: 'runner', id: entry.runnerId, label: entry.host || null, createdAt: now() };
+    saveStore();
+  }
+  safeSend(entry.socket, { type: 'device_token', token });
+}
+
 function sendToRunner(obj) {
   // Only dispatch to an APPROVED runner with a live socket. A connected-but-
   // unapproved machine is ignored until the user pairs it from the phone.
@@ -365,7 +380,10 @@ function handleRunnerMessage(entry, msg) {
       broadcastRunnerStatus();
       // Self-heal only for approved runners — re-drive tasks stranded because
       // no approved runner was connected when they were created/confirmed.
-      if (approved) resumeStuckTasks();
+      if (approved) {
+        ensureRunnerToken(entry); // hand it a per-device token if it lacks one
+        resumeStuckTasks();
+      }
       break;
     }
     case 'state_restore': {
@@ -583,17 +601,9 @@ async function build() {
       name: entry.runnerName || 'runner',
       pairedAt: now(),
     };
-    // Issue a per-device token to this runner (revocable) and hand it over the
-    // open socket so it can reconnect without the shared secret.
-    let deviceToken = Object.keys(store.deviceTokens).find(
-      (t) => store.deviceTokens[t].kind === 'runner' && store.deviceTokens[t].id === id,
-    );
-    if (!deviceToken) {
-      deviceToken = genToken();
-      store.deviceTokens[deviceToken] = { kind: 'runner', id, label: entry.host || null, createdAt: now() };
-    }
     saveStore();
-    safeSend(entry.socket, { type: 'device_token', token: deviceToken });
+    // Issue a per-device token (revocable) and hand it over the open socket.
+    ensureRunnerToken(entry);
     console.log('[runner] approved:', id);
     broadcastRunnerStatus();
     resumeStuckTasks(); // run anything that was waiting for approval
