@@ -95,6 +95,94 @@ function readStateMirror() {
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// Per-repo code index ("repo map"): built once per repo (cached on the laptop,
+// keyed by git HEAD) so Claude gets an instant map instead of re-scanning the
+// whole repo from scratch every task. Pure static analysis — costs 0 tokens.
+// ---------------------------------------------------------------------------
+
+const INDEX_DIR = path.join(STATE_DIR, 'repo-index');
+const SRC_EXT = new Set([
+  'js', 'jsx', 'ts', 'tsx', 'mjs', 'cjs', 'py', 'rb', 'go', 'java', 'kt', 'rs',
+  'php', 'c', 'cc', 'cpp', 'h', 'hpp', 'cs', 'swift', 'scala', 'sh', 'sql',
+]);
+// Top-level declarations across common languages.
+const SYMBOL_RE = /^(export\s+)?(default\s+)?(public\s+|private\s+|protected\s+)?(static\s+)?(async\s+)?(function|class|interface|type|enum|struct|def|func|const|let|var|module|trait|impl|fn)\b/;
+
+function indexFileFor(repo) {
+  const safe = String(repo).replace(/[^A-Za-z0-9._-]/g, '_');
+  return path.join(INDEX_DIR, safe + '.json');
+}
+
+function gitLines(dir, args) {
+  const r = spawnSync('git', args, { cwd: dir, encoding: 'utf8', maxBuffer: 20 * 1024 * 1024 });
+  if (r.status !== 0) return [];
+  return String(r.stdout || '').split('\n').map((s) => s.trim()).filter(Boolean);
+}
+
+/** Build a compact repo map: file list + top-level symbols per source file. */
+function buildRepoMap(dir) {
+  const files = gitLines(dir, ['ls-files']);
+  const lines = [`# Repo map — ${files.length} files`];
+  let symBudget = 3000; // cap total symbol lines so the map stays compact
+  let filesRead = 0;
+  for (const f of files) {
+    lines.push(f);
+    const ext = (f.split('.').pop() || '').toLowerCase();
+    if (SRC_EXT.has(ext) && symBudget > 0 && filesRead < 400) {
+      filesRead += 1;
+      try {
+        const content = fs.readFileSync(path.join(dir, f), 'utf8');
+        const syms = content
+          .split('\n')
+          // top-level only: no leading indentation (or an export), which keeps
+          // the map to real declarations rather than nested locals.
+          .filter((l) => /^(export|module\.|public |private |protected )/.test(l) || (/^\S/.test(l) && SYMBOL_RE.test(l.trim())))
+          .map((l) => l.trim())
+          .slice(0, 40);
+        for (const s of syms) {
+          lines.push('    ' + s.replace(/\s*[\{\(].*$/, '').slice(0, 110));
+          if (--symBudget <= 0) break;
+        }
+      } catch (_) { /* skip unreadable */ }
+    }
+  }
+  let map = lines.join('\n');
+  if (map.length > 60000) map = map.slice(0, 60000) + '\n… (map truncated)';
+  return map;
+}
+
+/**
+ * Return the cached repo map, rebuilding it only when the repo's HEAD changed
+ * (or it's the first time). Emits a first-time "indexing" note so the phone can
+ * explain the one-off delay.
+ */
+function ensureRepoIndex(dir, repo, emit, taskId) {
+  const head = (gitLines(dir, ['rev-parse', 'HEAD'])[0]) || null;
+  const file = indexFileFor(repo);
+  let cached = null;
+  try { if (fs.existsSync(file)) cached = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (_) {}
+  if (cached && cached.head === head && cached.map) {
+    emit && emit({ type: 'progress', taskId, message: `🗂️ using cached index for ${repo}` });
+    return cached.map;
+  }
+  const first = !cached;
+  emit && emit({
+    type: 'progress', taskId, state: 'RUNNING', pct: 18,
+    message: first
+      ? `🗂️ indexing ${repo} for the first time (one-time — future tasks are faster & cheaper)`
+      : `🗂️ repo changed — refreshing index for ${repo}`,
+  });
+  const t0 = Date.now();
+  const map = buildRepoMap(dir);
+  try {
+    fs.mkdirSync(INDEX_DIR, { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ repo, head, builtAt: Date.now(), map }));
+  } catch (_) {}
+  log(`indexed ${repo} in ${Date.now() - t0}ms (${map.length} chars)`);
+  return map;
+}
+
 // Budget: wall-clock ceiling for a REAL task and a default token budget.
 const DEFAULT_BUDGET_TOKENS = 250000;
 const REAL_WALL_CLOCK_MS = Number(process.env.DISPATCH_WALL_MS || 20 * 60 * 1000); // 20 min
@@ -553,10 +641,14 @@ async function runTaskReal(task, emit) {
     if (timeLeft() <= 0) return fail('FAILED', 'Wall-clock budget exhausted before edits.');
 
     // (c) Run claude inside the worktree.
+    const repoMap = ensureRepoIndex(repoDir, repo, emit, taskId);
     emit({ type: 'progress', taskId, state: 'RUNNING', message: 'invoking claude to make changes', pct: 40 });
     const goal = (spec && spec.goal) || '';
     const claudePrompt =
       `${promptText}\n\nGoal: ${goal}\n\n` +
+      'Use this pre-built map of the repository to locate the relevant code directly — ' +
+      'avoid re-scanning the whole repo; only read the specific files you need to edit.\n' +
+      `<repo_map>\n${repoMap}\n</repo_map>\n\n` +
       'Make the necessary code changes in this repository to accomplish the task. ' +
       'Do not commit or push; leave changes in the working tree.';
     if (!hasBinary('claude')) {
@@ -747,9 +839,14 @@ async function handleChat(msg, emit) {
     }
   }
 
+  const repoMap = repo && cwd !== os.tmpdir() ? ensureRepoIndex(cwd, repo, emit, taskId) : null;
   const chatPrompt =
     `Answer this question about ${repo ? `the repository ${repo}` : 'software engineering'}. ` +
     'Be concise and specific. This is READ-ONLY — do not modify, create, commit, or push any files.\n\n' +
+    (repoMap
+      ? 'Use this pre-built map of the repository to answer directly; only read specific files if you must.\n' +
+        `<repo_map>\n${repoMap}\n</repo_map>\n\n`
+      : '') +
     `Question: ${promptText}`;
 
   let tokensUsed = 0, costUsd = 0, answer = '';
@@ -1061,6 +1158,8 @@ module.exports = {
   generateSpec,
   classifyIntent,
   handleChat,
+  buildRepoMap,
+  ensureRepoIndex,
   runClaudeStream,
   describeToolUse,
   runTaskStub,
