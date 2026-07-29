@@ -50,8 +50,23 @@ let BACKEND_HOST = RAW_BACKEND;
   BACKEND_HOST = BACKEND_HOST.replace(/\/+$/, '');
 }
 const WS_SCHEME = WS_SECURE ? 'wss' : 'ws';
-const TOKEN = 'dev-token';
 const RUNNER_NAME = process.env.RUNNER_NAME || os.hostname();
+// Auth: a saved per-device token (issued at approval) takes precedence; else
+// the shared secret from the environment; else the legacy default.
+const TOKEN_FILE_PATH = require('path').join(os.homedir(), '.dispatch', 'token');
+function currentToken() {
+  try {
+    const t = require('fs').readFileSync(TOKEN_FILE_PATH, 'utf8').trim();
+    if (t) return t;
+  } catch (_) { /* none yet */ }
+  return process.env.DISPATCH_SECRET || 'dev-token';
+}
+function saveDeviceToken(t) {
+  try {
+    require('fs').mkdirSync(require('path').join(os.homedir(), '.dispatch'), { recursive: true });
+    require('fs').writeFileSync(TOKEN_FILE_PATH, String(t));
+  } catch (_) { /* best-effort */ }
+}
 
 // Real machine identity, sent on register so the phone can show WHAT is
 // connecting and require explicit approval before it's used.
@@ -944,7 +959,6 @@ async function handleRunTask(msg, emit, sleep) {
 
 function startWsClient() {
   const WebSocket = require('ws');
-  const url = `${WS_SCHEME}://${BACKEND_HOST}/ws?role=runner&token=${TOKEN}`;
   let backoff = 1000;
   const MAX_BACKOFF = 30000;
   let ws = null;
@@ -958,7 +972,8 @@ function startWsClient() {
   }
 
   function connect() {
-    log(`connecting to ${url} (mode=${STUB_MODE ? 'STUB' : 'REAL'}, runner=${RUNNER_NAME})`);
+    const url = `${WS_SCHEME}://${BACKEND_HOST}/ws?role=runner&token=${encodeURIComponent(currentToken())}`;
+    log(`connecting to ${WS_SCHEME}://${BACKEND_HOST}/ws (mode=${STUB_MODE ? 'STUB' : 'REAL'}, runner=${RUNNER_NAME})`);
     ws = new WebSocket(url);
     let alive = true;
 
@@ -1034,6 +1049,15 @@ function startWsClient() {
         } else if (msg.type === 'state_backup') {
           // Backend is mirroring its state to us for safekeeping.
           if (msg.state) saveStateMirror(msg.state);
+        } else if (msg.type === 'device_token') {
+          // We were approved and issued a per-device token; use it hereafter.
+          if (msg.token) { saveDeviceToken(msg.token); log('received per-device token; saved'); }
+        } else if (msg.type === 'unauthorized') {
+          // Our saved per-device token is no longer valid (e.g. backend was
+          // wiped/redeployed). Drop it so the next reconnect falls back to the
+          // shared secret, which lets us restore state and get re-approved.
+          log('backend rejected our token; clearing it and falling back to the secret');
+          try { require('fs').rmSync(TOKEN_FILE_PATH, { force: true }); } catch (_) {}
         } else {
           log('unhandled message type:', msg.type);
         }

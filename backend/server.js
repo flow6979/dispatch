@@ -23,6 +23,10 @@ const { nanoid } = require('nanoid');
 
 const PORT = Number(process.env.PORT) || 4000;
 const HOST = '0.0.0.0';
+// Shared bootstrap secret. Set DISPATCH_SECRET in the environment to a real
+// value; falls back to 'dev-token' for backward-compatible rollout (logs a
+// warning). Devices exchange this once for a per-device token.
+const SECRET = process.env.DISPATCH_SECRET || 'dev-token';
 const DATA_FILE = path.join(__dirname, 'data.json');
 const AUTO_PROCEED_MS = 3000;
 const DEFAULT_BUDGET_TOKENS = 250000;
@@ -39,6 +43,8 @@ let store = {
   // runnerId -> { host, ghUser, name, pairedAt }. A runner is only used to run
   // tasks once its machine has been explicitly approved from the phone.
   pairedRunners: {},
+  // per-device tokens: token -> { kind:'phone'|'runner', id, label, createdAt }
+  deviceTokens: {},
 };
 
 function loadStore() {
@@ -51,6 +57,8 @@ function loadStore() {
         store.context = parsed.context || { repo: null, baseBranch: null, workBranch: null };
         store.pairedRunners =
           parsed.pairedRunners && typeof parsed.pairedRunners === 'object' ? parsed.pairedRunners : {};
+        store.deviceTokens =
+          parsed.deviceTokens && typeof parsed.deviceTokens === 'object' ? parsed.deviceTokens : {};
       }
     }
   } catch (err) {
@@ -81,7 +89,12 @@ function scheduleStateBackup() {
     safeSend(live.socket, {
       type: 'state_backup',
       savedAt: now(),
-      state: { tasks: store.tasks, context: store.context, pairedRunners: store.pairedRunners },
+      state: {
+        tasks: store.tasks,
+        context: store.context,
+        pairedRunners: store.pairedRunners,
+        deviceTokens: store.deviceTokens,
+      },
     });
   }, 500);
 }
@@ -89,6 +102,27 @@ function scheduleStateBackup() {
 // ---------------------------------------------------------------------------
 // Task helpers
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Auth: a request is authorized if it presents the shared SECRET (bootstrap)
+// or a valid per-device token. Per-device tokens are individually revocable.
+// ---------------------------------------------------------------------------
+
+function genToken() {
+  return 'dt_' + nanoid(24);
+}
+
+function authOk(token) {
+  if (!token) return false;
+  if (token === SECRET) return true;
+  return !!store.deviceTokens[token];
+}
+
+function bearerOf(req) {
+  const h = (req.headers && req.headers.authorization) || '';
+  const m = /^Bearer\s+(.+)$/i.exec(h);
+  return m ? m[1].trim() : null;
+}
 
 const TERMINAL_STATES = new Set([
   'PR_OPEN',
@@ -346,6 +380,7 @@ function handleRunnerMessage(entry, msg) {
         if (s.tasks && typeof s.tasks === 'object') store.tasks = s.tasks;
         if (s.context) store.context = s.context;
         if (s.pairedRunners && typeof s.pairedRunners === 'object') store.pairedRunners = s.pairedRunners;
+        if (s.deviceTokens && typeof s.deviceTokens === 'object') store.deviceTokens = s.deviceTokens;
         saveStore();
         console.log(
           `[state] restored from runner backup: ${Object.keys(store.tasks).length} tasks, ${Object.keys(store.pairedRunners).length} paired`,
@@ -489,7 +524,38 @@ async function build() {
   await app.register(cors, { origin: true });
   await app.register(websocket);
 
+  // Auth gate for REST. Health (keep-warm) and enroll (bootstrap) are open;
+  // everything else needs the shared secret or a per-device token.
+  const OPEN_ROUTES = new Set(['/api/health', '/api/enroll']);
+  app.addHook('onRequest', async (req, reply) => {
+    if (!req.url.startsWith('/api/')) return; // /ws handled separately
+    const path = req.url.split('?')[0];
+    if (OPEN_ROUTES.has(path)) return;
+    if (!authOk(bearerOf(req))) {
+      reply.code(401);
+      return reply.send({ error: 'unauthorized' });
+    }
+  });
+
   // --- REST ---------------------------------------------------------------
+
+  // Exchange the shared secret for a per-device token (bootstrap enrollment).
+  app.post('/api/enroll', async (req, reply) => {
+    const body = req.body || {};
+    if (body.secret !== SECRET) {
+      reply.code(403);
+      return { error: 'bad_secret' };
+    }
+    const token = genToken();
+    store.deviceTokens[token] = {
+      kind: body.kind === 'runner' ? 'runner' : 'phone',
+      id: body.deviceId || null,
+      label: body.label || null,
+      createdAt: now(),
+    };
+    saveStore();
+    return { token };
+  });
 
   app.get('/api/health', async () => {
     // `runners` = approved+connected (drives the phone's connected indicator).
@@ -517,7 +583,17 @@ async function build() {
       name: entry.runnerName || 'runner',
       pairedAt: now(),
     };
+    // Issue a per-device token to this runner (revocable) and hand it over the
+    // open socket so it can reconnect without the shared secret.
+    let deviceToken = Object.keys(store.deviceTokens).find(
+      (t) => store.deviceTokens[t].kind === 'runner' && store.deviceTokens[t].id === id,
+    );
+    if (!deviceToken) {
+      deviceToken = genToken();
+      store.deviceTokens[deviceToken] = { kind: 'runner', id, label: entry.host || null, createdAt: now() };
+    }
     saveStore();
+    safeSend(entry.socket, { type: 'device_token', token: deviceToken });
     console.log('[runner] approved:', id);
     broadcastRunnerStatus();
     resumeStuckTasks(); // run anything that was waiting for approval
@@ -528,6 +604,12 @@ async function build() {
   app.post('/api/runners/:id/revoke', async (req) => {
     const id = decodeURIComponent(req.params.id);
     delete store.pairedRunners[id];
+    // Also revoke any device token issued to this runner.
+    for (const t of Object.keys(store.deviceTokens)) {
+      if (store.deviceTokens[t].kind === 'runner' && store.deviceTokens[t].id === id) {
+        delete store.deviceTokens[t];
+      }
+    }
     saveStore();
     broadcastRunnerStatus();
     return { ok: true, runners: runnersPublic() };
@@ -628,6 +710,12 @@ async function build() {
 
   app.get('/ws', { websocket: true }, (socket, req) => {
     const role = (req.query && req.query.role) || 'phone';
+
+    // Authorize the socket: shared secret or a valid device token.
+    if (!authOk(req.query && req.query.token)) {
+      try { safeSend(socket, { type: 'unauthorized' }); socket.close(); } catch (_) {}
+      return;
+    }
 
     if (role === 'runner') {
       const entry = { socket, runnerName: null };
