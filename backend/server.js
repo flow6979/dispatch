@@ -220,6 +220,10 @@ function touchTask(task) {
 
 const phones = new Set(); // Set<WebSocket>
 const runners = new Set(); // Set<{ socket, runnerName }>
+// repo -> { graph, head, builtAt } and repo -> status string. In-memory; the
+// runner re-sends on index build or on-demand, so they don't need persisting.
+const repoGraphs = new Map();
+const repoGraphStatus = new Map();
 
 function safeSend(socket, obj) {
   try {
@@ -432,6 +436,17 @@ function handleRunnerMessage(entry, msg) {
         ensureRunnerToken(entry); // approved via restore → hand it a token
         resumeStuckTasks(); // finish anything left mid-flight
       }
+      break;
+    }
+    case 'repo_graph': {
+      if (msg.repo && msg.graph) {
+        repoGraphs.set(msg.repo, { graph: msg.graph, head: msg.head || null, builtAt: now() });
+        repoGraphStatus.set(msg.repo, 'ready');
+      }
+      break;
+    }
+    case 'graph_status': {
+      if (msg.repo) repoGraphStatus.set(msg.repo, msg.status || 'building');
       break;
     }
     case 'request_pairing': {
@@ -683,6 +698,30 @@ async function build() {
   app.get('/api/repos', async () => {
     const repos = await fetchRepos();
     return { repos };
+  });
+
+  // Repo dependency graph for the Map tab. Returns the cached graph if present;
+  // otherwise reports status so the app can trigger a build.
+  app.get('/api/repo-graph', async (req) => {
+    const repo = (req.query && req.query.repo) || '';
+    const entry = repoGraphs.get(repo);
+    return {
+      repo,
+      graph: entry ? entry.graph : null,
+      head: entry ? entry.head : null,
+      builtAt: entry ? entry.builtAt : null,
+      status: repoGraphStatus.get(repo) || (entry ? 'ready' : 'none'),
+    };
+  });
+
+  // Ask the runner to (re)build a repo's graph.
+  app.post('/api/repo-graph/build', async (req) => {
+    const repo = (req.body && req.body.repo) || '';
+    if (!repo) return { error: 'repo required' };
+    repoGraphStatus.set(repo, 'queued');
+    const ok = sendToRunner({ type: 'build_graph', repo });
+    if (!ok) repoGraphStatus.set(repo, 'no_runner');
+    return { building: ok, status: repoGraphStatus.get(repo) };
   });
 
   app.get('/api/context', async () => {

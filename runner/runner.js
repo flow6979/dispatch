@@ -168,6 +168,68 @@ function buildRepoMap(dir) {
 }
 
 /**
+ * Build a dependency GRAPH of the repo via static analysis (0 tokens):
+ * nodes = source files, edges = intra-repo import relationships.
+ * Used by the app's "Map" tab to visualize how the repo connects.
+ */
+function buildRepoGraph(dir) {
+  const files = gitLines(dir, ['ls-files']);
+  const fileSet = new Set(files);
+  const isSrc = (f) => SRC_EXT.has((f.split('.').pop() || '').toLowerCase());
+  const srcFiles = files.filter(isSrc).slice(0, 600); // cap for very large repos
+
+  const JS_CAND = ['', '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '/index.js', '/index.ts', '/index.tsx', '/index.jsx'];
+  function resolveJs(fromFile, spec) {
+    if (!spec.startsWith('.')) return null; // only intra-repo relative imports
+    const baseDir = fromFile.split('/').slice(0, -1).join('/');
+    const parts = (baseDir ? baseDir + '/' : '') + spec;
+    const stack = [];
+    for (const seg of parts.split('/')) {
+      if (seg === '.' || seg === '') continue;
+      if (seg === '..') stack.pop();
+      else stack.push(seg);
+    }
+    const norm = stack.join('/');
+    for (const c of JS_CAND) {
+      if (fileSet.has(norm + c)) return norm + c;
+    }
+    return null;
+  }
+
+  const specRe = /(?:from\s+|\brequire\(\s*|\bimport\(\s*|\bimport\s+)['"]([^'"]+)['"]/g;
+  const edgesSet = new Set();
+  const edges = [];
+  for (const f of srcFiles) {
+    let content;
+    try { content = fs.readFileSync(path.join(dir, f), 'utf8'); } catch (_) { continue; }
+    specRe.lastIndex = 0;
+    let m; let count = 0;
+    while ((m = specRe.exec(content)) && count < 60) {
+      count += 1;
+      const target = resolveJs(f, m[1]);
+      if (target && target !== f) {
+        const key = f + ' ' + target;
+        if (!edgesSet.has(key)) { edgesSet.add(key); edges.push({ source: f, target }); }
+      }
+    }
+  }
+  const connected = new Set();
+  edges.forEach((e) => { connected.add(e.source); connected.add(e.target); });
+  const nodeList = srcFiles.filter((f) => connected.has(f));
+  const singletons = srcFiles.filter((f) => !connected.has(f)).slice(0, 60);
+  const degOf = {};
+  edges.forEach((e) => { degOf[e.source] = (degOf[e.source] || 0) + 1; degOf[e.target] = (degOf[e.target] || 0) + 1; });
+  const nodes = [...nodeList, ...singletons].map((f) => ({
+    id: f,
+    label: f.split('/').pop(),
+    path: f,
+    group: f.includes('/') ? f.split('/')[0] : '(root)',
+    deg: degOf[f] || 0,
+  }));
+  return { nodes, edges, fileCount: files.length, builtAt: Date.now() };
+}
+
+/**
  * Return the cached repo map, rebuilding it only when the repo's HEAD changed
  * (or it's the first time). Emits a first-time "indexing" note so the phone can
  * explain the one-off delay.
@@ -179,6 +241,7 @@ function ensureRepoIndex(dir, repo, emit, taskId) {
   try { if (fs.existsSync(file)) cached = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (_) {}
   if (cached && cached.head === head && cached.map) {
     emit && emit({ type: 'progress', taskId, message: `🗂️ using cached index for ${repo}` });
+    if (cached.graph) emit && emit({ type: 'repo_graph', repo, head, graph: cached.graph });
     return cached.map;
   }
   const first = !cached;
@@ -190,11 +253,14 @@ function ensureRepoIndex(dir, repo, emit, taskId) {
   });
   const t0 = Date.now();
   const map = buildRepoMap(dir);
+  let graph = null;
+  try { graph = buildRepoGraph(dir); } catch (_) {}
   try {
     fs.mkdirSync(INDEX_DIR, { recursive: true });
-    fs.writeFileSync(file, JSON.stringify({ repo, head, builtAt: Date.now(), map }));
+    fs.writeFileSync(file, JSON.stringify({ repo, head, builtAt: Date.now(), map, graph }));
   } catch (_) {}
-  log(`indexed ${repo} in ${Date.now() - t0}ms (${map.length} chars)`);
+  if (graph) emit && emit({ type: 'repo_graph', repo, head, graph });
+  log(`indexed ${repo} in ${Date.now() - t0}ms (map ${map.length} chars, graph ${graph ? graph.nodes.length : 0} nodes)`);
   return map;
 }
 
@@ -908,6 +974,30 @@ async function handleChat(msg, emit) {
   emit({ type: 'result', taskId, state: 'ANSWERED', resolvedKind: 'chat', answer, summary: answer.slice(0, 240), tokensUsed, costUsd });
 }
 
+/** On-demand: ensure the repo is cloned, build its graph, send it back. */
+async function handleBuildGraph(msg, emit) {
+  const repo = msg.repo;
+  if (!repo) return;
+  try {
+    const repoDirName = String(repo).replace(/[^A-Za-z0-9._/-]/g, '_').split('/').pop();
+    const repoDir = path.join(WORKSPACE, repoDirName);
+    fs.mkdirSync(WORKSPACE, { recursive: true });
+    if (!fs.existsSync(path.join(repoDir, '.git'))) {
+      emit({ type: 'graph_status', repo, status: 'cloning' });
+      if (hasBinary('gh')) await run('gh', ['repo', 'clone', repo, repoDir], { cwd: WORKSPACE, timeoutMs: 300000 });
+      else await run('git', ['clone', '--depth', '1', `https://github.com/${repo}.git`, repoDir], { cwd: WORKSPACE, timeoutMs: 300000 });
+    }
+    emit({ type: 'graph_status', repo, status: 'building' });
+    const head = (gitLines(repoDir, ['rev-parse', 'HEAD'])[0]) || null;
+    const graph = buildRepoGraph(repoDir);
+    emit({ type: 'repo_graph', repo, head, graph });
+    log(`built graph for ${repo}: ${graph.nodes.length} nodes / ${graph.edges.length} edges`);
+  } catch (err) {
+    emit({ type: 'graph_status', repo, status: 'error', message: err.message });
+    log('build_graph failed:', err.message);
+  }
+}
+
 async function handleGenerateSpec(msg, emit) {
   const mode = msg.mode || 'auto';
   let kind;
@@ -1049,6 +1139,9 @@ function startWsClient() {
         } else if (msg.type === 'run_task') {
           log(`run_task task=${msg.taskId} (${STUB_MODE ? 'STUB' : 'REAL'})`);
           await handleRunTask(msg, emit);
+        } else if (msg.type === 'build_graph') {
+          // On-demand repo graph for the app's Map tab.
+          await handleBuildGraph(msg, emit);
         } else if (msg.type === 'state_backup') {
           // Backend is mirroring its state to us for safekeeping.
           if (msg.state) saveStateMirror(msg.state);
@@ -1211,6 +1304,7 @@ module.exports = {
   classifyIntent,
   handleChat,
   buildRepoMap,
+  buildRepoGraph,
   ensureRepoIndex,
   runClaudeStream,
   describeToolUse,
