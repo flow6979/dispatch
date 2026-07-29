@@ -685,7 +685,114 @@ async function runDetectedTests(dir, timeoutMs) {
 // Message dispatch (shared by WS handler and selftest)
 // ---------------------------------------------------------------------------
 
+/**
+ * Decide whether a capture needs a PR ('task') or is just a question ('chat').
+ * Cheap: a prompt-only classification (no repo read). Heuristic fallback.
+ */
+async function classifyIntent(promptText) {
+  const p =
+    'Route a developer request. Reply with EXACTLY one word and nothing else: ' +
+    '"BUILD" if it asks to change, add, fix, implement, or refactor code (i.e. it should produce a pull request), ' +
+    'or "ASK" if it is a question, explanation, review, or discussion that needs NO code change. ' +
+    `Request: ${promptText}`;
+  if (!STUB_MODE) {
+    try {
+      const out = await runClaude(p, { cwd: os.tmpdir(), timeoutMs: 60000 });
+      const t = String(out).toUpperCase();
+      if (t.includes('ASK') && !t.includes('BUILD')) return 'chat';
+      if (t.includes('BUILD')) return 'task';
+    } catch (err) {
+      log('classifyIntent failed, using heuristic:', err.message);
+    }
+  }
+  const s = String(promptText || '').trim().toLowerCase();
+  if (/\?\s*$/.test(s) ||
+      /^(how|what|why|when|where|who|which|does|do |did |is |are |can |could |should |would |explain|describe|tell me|show me|why|is there|what's)/.test(s)) {
+    return 'chat';
+  }
+  return 'task';
+}
+
+/**
+ * Answer a question (no PR). Runs claude read-only — in the repo clone if one
+ * is selected, so answers are repo-aware. Ends with an ANSWERED result.
+ */
+async function handleChat(msg, emit) {
+  const { taskId, promptText, repo } = msg;
+  emit({ type: 'progress', taskId, state: 'RUNNING', message: '💬 thinking…', pct: 15 });
+
+  if (STUB_MODE) {
+    emit({
+      type: 'result', taskId, state: 'ANSWERED', resolvedKind: 'chat',
+      answer: `(stub) I would answer your question: "${promptText}"`,
+      summary: 'Answered (stub mode).', tokensUsed: 0, costUsd: 0,
+    });
+    return;
+  }
+
+  let cwd = os.tmpdir();
+  if (repo) {
+    try {
+      const repoDirName = String(repo).replace(/[^A-Za-z0-9._/-]/g, '_').split('/').pop();
+      const repoDir = path.join(WORKSPACE, repoDirName);
+      fs.mkdirSync(WORKSPACE, { recursive: true });
+      if (!fs.existsSync(path.join(repoDir, '.git'))) {
+        emit({ type: 'progress', taskId, state: 'RUNNING', message: `cloning ${repo}`, pct: 25 });
+        if (hasBinary('gh')) await run('gh', ['repo', 'clone', repo, repoDir], { cwd: WORKSPACE, timeoutMs: 300000 });
+        else await run('git', ['clone', '--depth', '1', `https://github.com/${repo}.git`, repoDir], { cwd: WORKSPACE, timeoutMs: 300000 });
+      }
+      cwd = repoDir;
+    } catch (err) {
+      log('chat: repo clone failed, answering without repo context:', err.message);
+    }
+  }
+
+  const chatPrompt =
+    `Answer this question about ${repo ? `the repository ${repo}` : 'software engineering'}. ` +
+    'Be concise and specific. This is READ-ONLY — do not modify, create, commit, or push any files.\n\n' +
+    `Question: ${promptText}`;
+
+  let tokensUsed = 0, costUsd = 0, answer = '';
+  try {
+    let step = 0;
+    const res = await runClaudeStream(chatPrompt, {
+      cwd,
+      timeoutMs: 10 * 60 * 1000,
+      onActivity: (a) => {
+        const g = a.kind === 'action' ? '🔧' : '💭';
+        log(`chat ${a.kind}: ${a.label}`);
+        step += 1;
+        emit({ type: 'progress', taskId, state: 'RUNNING', message: `${g} ${a.label}`, pct: Math.min(85, 30 + step * 3) });
+      },
+    });
+    tokensUsed = res.tokens || 0;
+    costUsd = res.costUsd || 0;
+    answer = (res.text && res.text.trim()) || '(no answer produced)';
+  } catch (err) {
+    emit({ type: 'result', taskId, state: 'FAILED', resolvedKind: 'chat', summary: `Couldn't answer: ${err.message}`, tokensUsed, costUsd });
+    return;
+  }
+  emit({ type: 'result', taskId, state: 'ANSWERED', resolvedKind: 'chat', answer, summary: answer.slice(0, 240), tokensUsed, costUsd });
+}
+
 async function handleGenerateSpec(msg, emit) {
+  const mode = msg.mode || 'auto';
+  let kind;
+  if (mode === 'ask') kind = 'chat';
+  else if (mode === 'build') kind = 'task';
+  else {
+    // Progress WITHOUT a state field so the backend keeps the task CAPTURED
+    // while we classify (no premature RUNNING).
+    emit({ type: 'progress', taskId: msg.taskId, message: '🧭 understanding intent…' });
+    kind = await classifyIntent(msg.promptText);
+    log(`intent for task=${msg.taskId}: ${kind}`);
+  }
+
+  if (kind === 'chat') {
+    await handleChat(msg, emit);
+    return;
+  }
+
   const spec = await generateSpec({
     promptText: msg.promptText,
     repo: msg.repo,
@@ -952,6 +1059,8 @@ module.exports = {
   normalizeSpec,
   extractJson,
   generateSpec,
+  classifyIntent,
+  handleChat,
   runClaudeStream,
   describeToolUse,
   runTaskStub,

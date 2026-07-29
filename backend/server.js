@@ -96,6 +96,7 @@ const TERMINAL_STATES = new Set([
   'BLOCKED',
   'MERGED',
   'DISCARDED',
+  'ANSWERED', // chat/question replied to — no PR
 ]);
 
 function now() {
@@ -110,7 +111,7 @@ function slugify(s) {
     .slice(0, 32) || 'task';
 }
 
-function newTask({ promptText, repo, baseBranch, workBranch }) {
+function newTask({ promptText, repo, baseBranch, workBranch, mode }) {
   const ts = now();
   const id = 't_' + nanoid(8);
   // Real mode refuses to work on a default/protected branch, and the phone
@@ -125,6 +126,10 @@ function newTask({ promptText, repo, baseBranch, workBranch }) {
     baseBranch: baseBranch || null,
     workBranch: derivedBranch,
     state: 'CAPTURED',
+    // 'auto' = runner decides chat vs task; 'ask' = force chat; 'build' = force PR
+    mode: mode === 'ask' || mode === 'build' ? mode : 'auto',
+    resolvedKind: null, // set by runner: 'chat' | 'task'
+    answer: null, // filled for chat/ANSWERED tasks
     spec: null,
     summary: null,
     prUrl: null,
@@ -234,6 +239,7 @@ function requestSpec(task) {
     repo: task.repo,
     baseBranch: task.baseBranch,
     workBranch: task.workBranch,
+    mode: task.mode || 'auto',
   });
 }
 
@@ -399,6 +405,8 @@ function handleRunnerMessage(entry, msg) {
       task.state = msg.state || 'FAILED';
       if (msg.prUrl !== undefined) task.prUrl = msg.prUrl;
       if (msg.summary !== undefined) task.summary = msg.summary;
+      if (msg.answer !== undefined) task.answer = msg.answer;
+      if (msg.resolvedKind !== undefined) task.resolvedKind = msg.resolvedKind;
       if (typeof msg.tokensUsed === 'number') task.tokensUsed = msg.tokensUsed;
       if (typeof msg.costUsd === 'number') task.costUsd = msg.costUsd;
       task.progress.push({
@@ -552,6 +560,7 @@ async function build() {
       repo: body.repo,
       baseBranch: body.baseBranch,
       workBranch: body.workBranch,
+      mode: body.mode,
     });
     store.tasks[task.id] = task;
     saveStore();
