@@ -572,9 +572,17 @@ function startWsClient() {
   let ws = null;
   let stopping = false;
 
+  let heartbeat = null;
+  const HEARTBEAT_MS = 20000; // ping cadence; also keeps Render's proxy from idling us out
+
+  function stopHeartbeat() {
+    if (heartbeat) { clearInterval(heartbeat); heartbeat = null; }
+  }
+
   function connect() {
     log(`connecting to ${url} (mode=${STUB_MODE ? 'STUB' : 'REAL'}, runner=${RUNNER_NAME})`);
     ws = new WebSocket(url);
+    let alive = true;
 
     const emit = (obj) => {
       if (ws && ws.readyState === WebSocket.OPEN) {
@@ -584,10 +592,28 @@ function startWsClient() {
       }
     };
 
+    ws.on('pong', () => { alive = true; });
+
     ws.on('open', () => {
       backoff = 1000; // reset on successful connect
       log('connected; registering');
       emit({ type: 'register', runnerName: RUNNER_NAME, capabilities: ['git', 'gh', 'claude'] });
+      // Heartbeat: Render's free tier silently drops idle WebSocket
+      // connections. Without this the runner half-closes — it thinks it's
+      // connected while the backend shows 0 runners and tasks wait forever.
+      // Ping keeps the pipe warm; a missing pong forces a reconnect.
+      stopHeartbeat();
+      alive = true;
+      heartbeat = setInterval(() => {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        if (!alive) {
+          log('no pong since last ping; connection is dead, terminating to reconnect');
+          try { ws.terminate(); } catch (_) { /* ignore */ }
+          return;
+        }
+        alive = false;
+        try { ws.ping(); } catch (_) { /* ignore */ }
+      }, HEARTBEAT_MS);
       // Push the operator's real repo list to the backend (it has no gh auth).
       // Async so registration/connect isn't blocked on the gh call.
       fetchRepos().then((repos) => {
@@ -632,6 +658,7 @@ function startWsClient() {
     });
 
     ws.on('close', () => {
+      stopHeartbeat();
       if (stopping) return;
       log(`socket closed; reconnecting in ${backoff}ms`);
       setTimeout(connect, backoff);

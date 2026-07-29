@@ -477,6 +477,9 @@ async function build() {
       runners.add(entry);
       console.log('[ws] runner connected. total runners:', runners.size);
 
+      socket.isAlive = true;
+      socket.on('pong', () => { socket.isAlive = true; });
+
       socket.on('message', (raw) => {
         let msg;
         try {
@@ -505,6 +508,9 @@ async function build() {
       // role=phone (default)
       phones.add(socket);
       console.log('[ws] phone connected. total phones:', phones.size);
+
+      socket.isAlive = true;
+      socket.on('pong', () => { socket.isAlive = true; });
 
       // Immediately push current state so the phone is in sync.
       safeSend(socket, { type: 'tasks_update', tasks: tasksNewestFirst() });
@@ -541,6 +547,27 @@ async function build() {
 // Boot
 // ---------------------------------------------------------------------------
 
+// Heartbeat: ping every connected socket; terminate any that missed the last
+// pong. Keeps `runners`/`phones` accurate when a peer half-closes (e.g. a
+// network drop) so the phone's runner status reflects reality.
+function startHeartbeat() {
+  const HEARTBEAT_MS = 30000;
+  setInterval(() => {
+    const sweep = (sock, onDead) => {
+      if (!sock) return;
+      if (sock.isAlive === false) {
+        try { sock.terminate(); } catch (_) { /* ignore */ }
+        if (onDead) onDead();
+        return;
+      }
+      sock.isAlive = false;
+      try { sock.ping(); } catch (_) { /* ignore */ }
+    };
+    for (const entry of runners) sweep(entry.socket);
+    for (const sock of phones) sweep(sock);
+  }, HEARTBEAT_MS);
+}
+
 async function main() {
   loadStore();
   const app = await build();
@@ -548,6 +575,7 @@ async function main() {
     await app.listen({ port: PORT, host: HOST });
     console.log(`[dispatch] backend listening on http://${HOST}:${PORT}`);
     console.log(`[dispatch] websocket on ws://${HOST}:${PORT}/ws`);
+    startHeartbeat();
   } catch (err) {
     console.error('[dispatch] failed to start:', err);
     process.exit(1);
