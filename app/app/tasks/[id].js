@@ -66,10 +66,12 @@ export default function TaskDetail() {
 
             <View style={styles.tokenRow}>
               <Text style={styles.tokenUsed}>{fmtTokens(task.tokensUsed)}</Text>
-              <Text style={styles.tokenLabel}>
-                tokens used{task.budgetTokens ? ` · budget ${fmtTokens(task.budgetTokens)}` : ''}
-              </Text>
+              <Text style={styles.tokenLabel}>tokens</Text>
+              {task.costUsd ? <Text style={styles.tokenCost}>{fmtCost(task.costUsd)}</Text> : null}
             </View>
+            <Text style={styles.tokenSub}>
+              this task{task.budgetTokens ? ` · budget ${fmtTokens(task.budgetTokens)} tokens` : ''}
+            </Text>
 
             {task.summary ? (
               <View>
@@ -147,6 +149,11 @@ function fmtTokens(n) {
   if (v >= 1000) return `${(v / 1000).toFixed(v >= 100000 ? 0 : 1)}k`;
   return String(v);
 }
+function fmtCost(n) {
+  const v = Number(n) || 0;
+  if (v === 0) return '$0.00';
+  return v < 0.01 ? '<$0.01' : `$${v.toFixed(2)}`;
+}
 function lastMsg(progress) {
   if (Array.isArray(progress) && progress.length) return progress[progress.length - 1].message;
   return null;
@@ -166,6 +173,8 @@ const styles = StyleSheet.create({
   tokenRow: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
   tokenUsed: { fontSize: 22, fontWeight: '800', color: C.text },
   tokenLabel: { fontSize: 12.5, color: C.muted },
+  tokenCost: { fontSize: 16, fontWeight: '700', color: C.ready, marginLeft: 4 },
+  tokenSub: { fontSize: 12, color: C.muted, marginTop: -8 },
   summary: { fontSize: 13.5, color: C.text2, lineHeight: 21 },
   progRow: { flexDirection: 'row', gap: 8, alignItems: 'flex-start', paddingVertical: 2 },
   progGlyph: { fontSize: 13.5, width: 14 },

@@ -90,9 +90,15 @@ function fmtTokens(n) {
   return String(v);
 }
 
+function fmtCost(n) {
+  const v = Number(n) || 0;
+  if (!v) return '';
+  return v < 0.01 ? ' · <$0.01' : ` · $${v.toFixed(2)}`;
+}
+
 function subFor(task) {
   const status = statusOf(task.state);
-  const tok = task.tokensUsed ? ` · ${fmtTokens(task.tokensUsed)} tokens` : '';
+  const tok = (task.tokensUsed ? ` · ${fmtTokens(task.tokensUsed)} tokens` : '') + fmtCost(task.costUsd);
   if (status === 'ready' && task.prUrl) {
     const num = prNumber(task.prUrl);
     return (num ? `PR #${num} ready` : 'PR ready') + tok;

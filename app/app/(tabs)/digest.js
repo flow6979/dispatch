@@ -15,8 +15,9 @@ export default function Digest() {
   const blocked = tasks.filter((t) => statusOf(t.state) === 'blocked');
 
   const repos = new Set(tasks.map((t) => t.repo).filter(Boolean));
-  // Real spend: sum of actual tokens reported by the runner per task.
+  // Real spend: sum of actual tokens + dollar cost reported by the runner.
   const spent = tasks.reduce((sum, t) => sum + (t.tokensUsed || 0), 0);
+  const spentUsd = tasks.reduce((sum, t) => sum + (t.costUsd || 0), 0);
 
   return (
     <View style={styles.screen}>
@@ -81,7 +82,7 @@ export default function Digest() {
         <View style={styles.footer}>
           <Text style={styles.footerTxt}>spent so far</Text>
           <Text style={styles.footerTxt}>
-            ~{Math.round(spent / 1000)}k tokens
+            ~{Math.round(spent / 1000)}k tokens{spentUsd ? ` · $${spentUsd.toFixed(2)}` : ''}
           </Text>
         </View>
       </ScrollView>
