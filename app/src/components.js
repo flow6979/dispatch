@@ -1,14 +1,21 @@
 // Higher-level shared components: fake phone status bar, context bar, task row, back row.
 import React from 'react';
-import { View, Text, Pressable, StyleSheet, Linking } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Linking, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { C } from './theme';
 import { Dot } from './ui';
 import { statusOf, stateLabel } from './theme';
 
+// On a real device the OS already draws the status bar, so we must NOT render a
+// second fake one (that showed a frozen "9:41 ●●● ▢" bar). Here we just reserve
+// the safe-area inset so content clears the notch/status bar. The decorative
+// mockup bar is kept for web only, where there is no OS status bar.
 export function StatusBarFaux() {
   const insets = useSafeAreaInsets();
+  if (Platform.OS !== 'web') {
+    return <View style={{ height: Math.max(insets.top, 0), backgroundColor: C.canvas }} />;
+  }
   return (
     <View style={[sb.wrap, { paddingTop: Math.max(insets.top, 8) }]}>
       <Text style={sb.time}>9:41</Text>

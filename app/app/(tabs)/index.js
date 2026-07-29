@@ -24,6 +24,7 @@ export default function Capture() {
   const [text, setText] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [listening, setListening] = useState(false);
+  const [sendError, setSendError] = useState(null);
 
   const recent = tasks.slice(0, 5);
 
@@ -31,6 +32,7 @@ export default function Capture() {
     const promptText = text.trim();
     if (!promptText || submitting) return;
     setSubmitting(true);
+    setSendError(null);
     try {
       const res = await api.createTask({
         promptText,
@@ -45,7 +47,10 @@ export default function Capture() {
         router.push(`/spec/${t.id}`);
       }
     } catch (e) {
-      // offline banner covers failure; keep text so user can retry
+      // Surface the failure instead of silently swallowing it — the backend
+      // may be waking from sleep (cold start) or unreachable. Keep the text.
+      const detail = (e && e.message) ? String(e.message).slice(0, 140) : 'unknown error';
+      setSendError(`Couldn't create task: ${detail}`);
     } finally {
       setSubmitting(false);
     }
@@ -93,13 +98,14 @@ export default function Capture() {
             )}
           </Pressable>
         </View>
-        {!hasRepo && (
+        {!hasRepo && !sendError && (
           <Pressable onPress={() => router.push('/repo-picker')}>
             <Text style={styles.repoHint}>
               No repo selected — tap to choose one so tasks can run.
             </Text>
           </Pressable>
         )}
+        {!!sendError && <Text style={styles.sendError}>{sendError}</Text>}
       </View>
 
       <View style={styles.divider} />
@@ -162,6 +168,7 @@ const styles = StyleSheet.create({
   },
   hint: { fontSize: 14, color: C.text2 },
   repoHint: { fontSize: 12.5, color: C.needsyou, textAlign: 'center', marginTop: 4 },
+  sendError: { fontSize: 12.5, color: C.blocked, textAlign: 'center', marginTop: 4 },
   inputRow: { flexDirection: 'row', alignItems: 'center', gap: 10, width: '100%' },
   input: {
     flex: 1,
