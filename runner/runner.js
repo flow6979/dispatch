@@ -213,6 +213,27 @@ function runClaude(prompt, { cwd, timeoutMs = 120000 } = {}) {
   return run('claude', ['-p', prompt], { cwd, timeoutMs });
 }
 
+/**
+ * Run claude in JSON mode so we get the real token usage back. Resolves
+ * { text, tokens } where tokens is the total input+output+cache for this call.
+ * Falls back to plain text (tokens 0) if JSON parsing fails.
+ */
+async function runClaudeJson(prompt, { cwd, timeoutMs = 120000 } = {}) {
+  const out = await run('claude', ['-p', prompt, '--output-format', 'json'], { cwd, timeoutMs });
+  try {
+    const d = JSON.parse(out);
+    const u = d.usage || {};
+    const tokens =
+      (u.input_tokens || 0) +
+      (u.output_tokens || 0) +
+      (u.cache_creation_input_tokens || 0) +
+      (u.cache_read_input_tokens || 0);
+    return { text: typeof d.result === 'string' ? d.result : out, tokens };
+  } catch (_) {
+    return { text: out, tokens: 0 };
+  }
+}
+
 /** Generic command runner. Resolves {stdout} on exit 0, rejects otherwise. */
 function run(cmd, args, { cwd, timeoutMs = 120000, env } = {}) {
   return new Promise((resolve, reject) => {
@@ -431,8 +452,11 @@ async function runTaskReal(task, emit) {
     if (!hasBinary('claude')) {
       return fail('FAILED', 'claude CLI not found on PATH.');
     }
+    let tokensUsed = 0;
     try {
-      await runClaude(claudePrompt, { cwd: worktreeDir, timeoutMs: Math.min(timeLeft(), 15 * 60 * 1000) });
+      const res = await runClaudeJson(claudePrompt, { cwd: worktreeDir, timeoutMs: Math.min(timeLeft(), 15 * 60 * 1000) });
+      tokensUsed = res.tokens || 0;
+      emit({ type: 'progress', taskId, state: 'RUNNING', message: `claude made changes (${tokensUsed.toLocaleString()} tokens)`, pct: 60, tokensUsed });
     } catch (err) {
       return fail('FAILED', `claude edit step failed: ${err.message}`);
     }
@@ -488,9 +512,10 @@ async function runTaskReal(task, emit) {
       taskId,
       state: 'PR_OPEN',
       prUrl,
+      tokensUsed,
       summary: confidenceSummary(
         spec,
-        `Draft PR opened at ${prUrl}. Tests: ${testResult.ran ? (testResult.passed ? 'passed' : 'failed') : 'none detected'}. Budget ${budget} tokens.`,
+        `Draft PR opened at ${prUrl}. Tests: ${testResult.ran ? (testResult.passed ? 'passed' : 'failed') : 'none detected'}. Used ~${tokensUsed.toLocaleString()} tokens.`,
       ),
     });
   } catch (err) {

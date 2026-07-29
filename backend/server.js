@@ -78,19 +78,34 @@ function now() {
   return Date.now();
 }
 
+function slugify(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 32) || 'task';
+}
+
 function newTask({ promptText, repo, baseBranch, workBranch }) {
   const ts = now();
+  const id = 't_' + nanoid(8);
+  // Real mode refuses to work on a default/protected branch, and the phone
+  // rarely specifies one. Auto-derive a unique work branch from the prompt so
+  // every task lands on its own branch and can open a PR.
+  const derivedBranch =
+    workBranch || `dispatch/${slugify(promptText)}-${id.slice(2, 6)}`;
   return {
-    id: 't_' + nanoid(8),
+    id,
     promptText: promptText || '',
     repo: repo || null,
     baseBranch: baseBranch || null,
-    workBranch: workBranch || null,
+    workBranch: derivedBranch,
     state: 'CAPTURED',
     spec: null,
     summary: null,
     prUrl: null,
     progress: [],
+    tokensUsed: 0,
     budgetTokens: DEFAULT_BUDGET_TOKENS,
     createdAt: ts,
     updatedAt: ts,
@@ -277,6 +292,7 @@ function handleRunnerMessage(entry, msg) {
         break;
       }
       if (msg.state) task.state = msg.state;
+      if (typeof msg.tokensUsed === 'number') task.tokensUsed = msg.tokensUsed;
       task.progress.push({
         ts: now(),
         state: msg.state || task.state,
@@ -295,6 +311,7 @@ function handleRunnerMessage(entry, msg) {
       task.state = msg.state || 'FAILED';
       if (msg.prUrl !== undefined) task.prUrl = msg.prUrl;
       if (msg.summary !== undefined) task.summary = msg.summary;
+      if (typeof msg.tokensUsed === 'number') task.tokensUsed = msg.tokensUsed;
       task.progress.push({
         ts: now(),
         state: task.state,
