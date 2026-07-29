@@ -29,6 +29,11 @@ const fs = require('fs');
 const { spawn, spawnSync } = require('child_process');
 const { nanoid } = require('nanoid');
 
+// Request the 1-hour prompt-cache TTL so the stable prefix (instructions +
+// repo map) survives between tasks on the same repo. Harmless on subscriptions
+// (the CLI already does this); required for API keys.
+process.env.ENABLE_PROMPT_CACHING_1H = process.env.ENABLE_PROMPT_CACHING_1H || '1';
+
 // ---------------------------------------------------------------------------
 // Configuration (all overridable via env, per PROTOCOL "Ports & scripts")
 // ---------------------------------------------------------------------------
@@ -422,7 +427,11 @@ async function generateSpec({ promptText, repo, baseBranch, workBranch }) {
 
 /** Build the common claude CLI flags for model routing + dollar budget cap. */
 function claudeFlags({ model, maxBudgetUsd } = {}) {
-  const f = [];
+  // --exclude-dynamic-system-prompt-sections strips per-session/dir/git context
+  // from the system prompt so the prefix is byte-identical across worktrees and
+  // can be reused from the prompt cache (huge input-token savings on repeat
+  // tasks per repo).
+  const f = ['--exclude-dynamic-system-prompt-sections'];
   if (model) f.push('--model', String(model));
   if (maxBudgetUsd && maxBudgetUsd > 0) f.push('--max-budget-usd', String(maxBudgetUsd));
   return f;
@@ -742,13 +751,16 @@ async function runTaskReal(task, emit) {
     const repoMap = ensureRepoIndex(repoDir, repo, emit, taskId);
     emit({ type: 'progress', taskId, state: 'RUNNING', message: 'invoking claude to make changes', pct: 40 });
     const goal = (spec && spec.goal) || '';
+    // Order matters for prompt caching: keep the STABLE prefix (standing
+    // instructions + repo map) first and the per-task text last, so repeated
+    // tasks on the same repo reuse the cached prefix.
     const claudePrompt =
-      `${promptText}\n\nGoal: ${goal}\n\n` +
-      'Use this pre-built map of the repository to locate the relevant code directly — ' +
-      'avoid re-scanning the whole repo; only read the specific files you need to edit.\n' +
+      'You are an autonomous coding agent working inside a git worktree of a repository. ' +
+      'Use the repository map below to locate relevant code directly — avoid re-scanning the ' +
+      'whole repo; only read the specific files you need to edit. Make the necessary code ' +
+      'changes to accomplish the task. Do not commit or push; leave changes in the working tree.\n\n' +
       `<repo_map>\n${repoMap}\n</repo_map>\n\n` +
-      'Make the necessary code changes in this repository to accomplish the task. ' +
-      'Do not commit or push; leave changes in the working tree.';
+      `--- TASK ---\n${promptText}\n\nGoal: ${goal}\n`;
     if (!hasBinary('claude')) {
       return fail('FAILED', 'claude CLI not found on PATH.');
     }
@@ -940,14 +952,16 @@ async function handleChat(msg, emit) {
   }
 
   const repoMap = repo && cwd !== os.tmpdir() ? ensureRepoIndex(cwd, repo, emit, taskId) : null;
+  // Stable prefix first (instructions + repo map), the question last — for
+  // prompt-cache reuse across questions on the same repo.
   const chatPrompt =
-    `Answer this question about ${repo ? `the repository ${repo}` : 'software engineering'}. ` +
+    `You answer questions about ${repo ? `the repository ${repo}` : 'software engineering'}. ` +
     'Be concise and specific. This is READ-ONLY — do not modify, create, commit, or push any files.\n\n' +
     (repoMap
-      ? 'Use this pre-built map of the repository to answer directly; only read specific files if you must.\n' +
+      ? 'Use the repository map below to answer directly; only read specific files if you must.\n' +
         `<repo_map>\n${repoMap}\n</repo_map>\n\n`
       : '') +
-    `Question: ${promptText}`;
+    `--- QUESTION ---\n${promptText}`;
 
   let tokensUsed = 0, costUsd = 0, answer = '';
   try {
