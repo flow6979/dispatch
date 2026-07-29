@@ -84,11 +84,18 @@ function latestPct(task) {
   return null;
 }
 
+function fmtTokens(n) {
+  const v = Number(n) || 0;
+  if (v >= 1000) return `${(v / 1000).toFixed(v >= 100000 ? 0 : 1)}k`;
+  return String(v);
+}
+
 function subFor(task) {
   const status = statusOf(task.state);
+  const tok = task.tokensUsed ? ` · ${fmtTokens(task.tokensUsed)} tokens` : '';
   if (status === 'ready' && task.prUrl) {
     const num = prNumber(task.prUrl);
-    return num ? `PR #${num} ready` : 'PR ready';
+    return (num ? `PR #${num} ready` : 'PR ready') + tok;
   }
   if (status === 'needsyou') {
     const last = lastMessage(task);
@@ -96,7 +103,7 @@ function subFor(task) {
   }
   if (status === 'blocked') {
     const last = lastMessage(task);
-    return last ? `blocked · ${last}` : 'blocked';
+    return (last ? `blocked · ${last}` : 'blocked') + tok;
   }
   if (status === 'running') return null;
   return stateLabel(task.state);

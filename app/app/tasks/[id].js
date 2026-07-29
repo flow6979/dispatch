@@ -64,6 +64,13 @@ export default function TaskDetail() {
               <Text style={styles.statePillTxt}>{stateLabel(task.state)}</Text>
             </View>
 
+            <View style={styles.tokenRow}>
+              <Text style={styles.tokenUsed}>{fmtTokens(task.tokensUsed)}</Text>
+              <Text style={styles.tokenLabel}>
+                tokens used{task.budgetTokens ? ` · budget ${fmtTokens(task.budgetTokens)}` : ''}
+              </Text>
+            </View>
+
             {task.summary ? (
               <View>
                 <CapLabel style={{ marginBottom: 6 }}>Summary</CapLabel>
@@ -135,6 +142,11 @@ function truncate(s) {
   s = s || 'Task';
   return s.length > 28 ? s.slice(0, 26) + '…' : s;
 }
+function fmtTokens(n) {
+  const v = Number(n) || 0;
+  if (v >= 1000) return `${(v / 1000).toFixed(v >= 100000 ? 0 : 1)}k`;
+  return String(v);
+}
 function lastMsg(progress) {
   if (Array.isArray(progress) && progress.length) return progress[progress.length - 1].message;
   return null;
@@ -151,6 +163,9 @@ const styles = StyleSheet.create({
   checkTxt: { fontSize: 14, color: C.text, lineHeight: 21 },
   statePill: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   statePillTxt: { fontSize: 13, color: C.text2, textTransform: 'capitalize' },
+  tokenRow: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
+  tokenUsed: { fontSize: 22, fontWeight: '800', color: C.text },
+  tokenLabel: { fontSize: 12.5, color: C.muted },
   summary: { fontSize: 13.5, color: C.text2, lineHeight: 21 },
   progRow: { flexDirection: 'row', gap: 8, alignItems: 'flex-start', paddingVertical: 2 },
   progGlyph: { fontSize: 13.5, width: 14 },
