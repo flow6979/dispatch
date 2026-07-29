@@ -26,6 +26,7 @@ const HOST = '0.0.0.0';
 const DATA_FILE = path.join(__dirname, 'data.json');
 const AUTO_PROCEED_MS = 3000;
 const DEFAULT_BUDGET_TOKENS = 250000;
+const DEFAULT_BUDGET_USD = Number(process.env.DISPATCH_BUDGET_USD || 3);
 
 // ---------------------------------------------------------------------------
 // Persistence (JSON file, read on boot, write on every change)
@@ -137,6 +138,7 @@ function newTask({ promptText, repo, baseBranch, workBranch, mode }) {
     tokensUsed: 0,
     costUsd: 0,
     budgetTokens: DEFAULT_BUDGET_TOKENS,
+    budgetUsd: DEFAULT_BUDGET_USD,
     createdAt: ts,
     updatedAt: ts,
     // internal-only bookkeeping (not part of contract, but harmless to expose)
@@ -240,6 +242,7 @@ function requestSpec(task) {
     baseBranch: task.baseBranch,
     workBranch: task.workBranch,
     mode: task.mode || 'auto',
+    budgetUsd: task.budgetUsd,
   });
 }
 
@@ -265,6 +268,7 @@ function sendRunTask(task) {
     baseBranch: task.baseBranch,
     workBranch: task.workBranch,
     budgetTokens: task.budgetTokens,
+    budgetUsd: task.budgetUsd,
   });
 }
 

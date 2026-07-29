@@ -187,6 +187,15 @@ function ensureRepoIndex(dir, repo, emit, taskId) {
 const DEFAULT_BUDGET_TOKENS = 250000;
 const REAL_WALL_CLOCK_MS = Number(process.env.DISPATCH_WALL_MS || 20 * 60 * 1000); // 20 min
 
+// Model routing: cheap models for trivial work, a stronger one for real edits.
+// All overridable so you can dial cost vs quality.
+const CLASSIFY_MODEL = process.env.DISPATCH_CLASSIFY_MODEL || 'haiku';
+const SPEC_MODEL = process.env.DISPATCH_SPEC_MODEL || 'haiku';
+const CHAT_MODEL = process.env.DISPATCH_CHAT_MODEL || 'sonnet';
+const EDIT_MODEL = process.env.DISPATCH_EDIT_MODEL || 'sonnet'; // set to 'opus' for hard tasks
+// Hard dollar cap per task (claude stops itself via --max-budget-usd).
+const DEFAULT_BUDGET_USD = Number(process.env.DISPATCH_BUDGET_USD || 3);
+
 // Branch names we refuse to work directly on (default/protected).
 const PROTECTED_BRANCHES = new Set([
   'main', 'master', 'develop', 'trunk', 'release', 'production', 'prod',
@@ -316,7 +325,7 @@ async function generateSpec({ promptText, repo, baseBranch, workBranch }) {
     `Task: ${promptText}`;
 
   try {
-    const out = await runClaude(prompt, { cwd: process.cwd(), timeoutMs: 120000 });
+    const out = await runClaude(prompt, { cwd: process.cwd(), timeoutMs: 120000, model: SPEC_MODEL });
     const parsed = extractJson(out);
     if (!parsed) throw new Error('could not parse JSON from claude output');
     return normalizeSpec(parsed, promptText);
@@ -330,9 +339,17 @@ async function generateSpec({ promptText, repo, baseBranch, workBranch }) {
 // child_process helpers
 // ---------------------------------------------------------------------------
 
+/** Build the common claude CLI flags for model routing + dollar budget cap. */
+function claudeFlags({ model, maxBudgetUsd } = {}) {
+  const f = [];
+  if (model) f.push('--model', String(model));
+  if (maxBudgetUsd && maxBudgetUsd > 0) f.push('--max-budget-usd', String(maxBudgetUsd));
+  return f;
+}
+
 /** Run `claude -p <prompt>` and resolve with stdout. Rejects on error/timeout. */
-function runClaude(prompt, { cwd, timeoutMs = 120000 } = {}) {
-  return run('claude', ['-p', prompt], { cwd, timeoutMs });
+function runClaude(prompt, { cwd, timeoutMs = 120000, model, maxBudgetUsd } = {}) {
+  return run('claude', ['-p', prompt, ...claudeFlags({ model, maxBudgetUsd })], { cwd, timeoutMs });
 }
 
 /**
@@ -340,8 +357,8 @@ function runClaude(prompt, { cwd, timeoutMs = 120000 } = {}) {
  * { text, tokens } where tokens is the total input+output+cache for this call.
  * Falls back to plain text (tokens 0) if JSON parsing fails.
  */
-async function runClaudeJson(prompt, { cwd, timeoutMs = 120000 } = {}) {
-  const out = await run('claude', ['-p', prompt, '--output-format', 'json'], { cwd, timeoutMs });
+async function runClaudeJson(prompt, { cwd, timeoutMs = 120000, model, maxBudgetUsd } = {}) {
+  const out = await run('claude', ['-p', prompt, '--output-format', 'json', ...claudeFlags({ model, maxBudgetUsd })], { cwd, timeoutMs });
   try {
     const d = JSON.parse(out);
     const u = d.usage || {};
@@ -380,9 +397,9 @@ function describeToolUse(name, input) {
  * onActivity({kind, label, detail}) so the caller can log it and push it to
  * the phone. Resolves { text, tokens } from the terminal `result` event.
  */
-function runClaudeStream(prompt, { cwd, timeoutMs = 120000, onActivity } = {}) {
+function runClaudeStream(prompt, { cwd, timeoutMs = 120000, onActivity, model, maxBudgetUsd } = {}) {
   return new Promise((resolve, reject) => {
-    const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose'];
+    const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose', ...claudeFlags({ model, maxBudgetUsd })];
     const child = spawn('claude', args, { cwd, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
     let buf = '';
     let stderr = '';
@@ -663,6 +680,8 @@ async function runTaskReal(task, emit) {
       const res = await runClaudeStream(claudePrompt, {
         cwd: worktreeDir,
         timeoutMs: Math.min(timeLeft(), 15 * 60 * 1000),
+        model: EDIT_MODEL,
+        maxBudgetUsd: task.budgetUsd || DEFAULT_BUDGET_USD,
         onActivity: (a) => {
           const glyph = a.kind === 'action' ? '🔧' : '💭';
           log(`claude ${a.kind}: ${a.label}`);
@@ -789,7 +808,7 @@ async function classifyIntent(promptText) {
     `Request: ${promptText}`;
   if (!STUB_MODE) {
     try {
-      const out = await runClaude(p, { cwd: os.tmpdir(), timeoutMs: 60000 });
+      const out = await runClaude(p, { cwd: os.tmpdir(), timeoutMs: 60000, model: CLASSIFY_MODEL });
       const t = String(out).toUpperCase();
       if (t.includes('ASK') && !t.includes('BUILD')) return 'chat';
       if (t.includes('BUILD')) return 'task';
@@ -855,6 +874,8 @@ async function handleChat(msg, emit) {
     const res = await runClaudeStream(chatPrompt, {
       cwd,
       timeoutMs: 10 * 60 * 1000,
+      model: CHAT_MODEL,
+      maxBudgetUsd: msg.budgetUsd || DEFAULT_BUDGET_USD,
       onActivity: (a) => {
         const g = a.kind === 'action' ? '🔧' : '💭';
         log(`chat ${a.kind}: ${a.label}`);
@@ -908,6 +929,7 @@ async function handleRunTask(msg, emit, sleep) {
     baseBranch: msg.baseBranch,
     workBranch: msg.workBranch,
     budgetTokens: msg.budgetTokens,
+    budgetUsd: msg.budgetUsd,
   };
   if (STUB_MODE) {
     await runTaskStub(task, emit, sleep);
