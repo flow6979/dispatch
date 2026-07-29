@@ -73,7 +73,14 @@ export default function TaskDetail() {
               this task{task.budgetTokens ? ` · budget ${fmtTokens(task.budgetTokens)} tokens` : ''}
             </Text>
 
-            {task.summary ? (
+            {task.answer ? (
+              <Card style={{ borderColor: 'rgba(48,209,88,0.35)' }}>
+                <Text style={[styles.checkLabel, { color: C.ready }]}>💬 Answer</Text>
+                <Text style={styles.answerTxt}>{task.answer}</Text>
+              </Card>
+            ) : null}
+
+            {task.answer ? null : task.summary ? (
               <View>
                 <CapLabel style={{ marginBottom: 6 }}>Summary</CapLabel>
                 <Text style={styles.summary}>{task.summary}</Text>
@@ -113,7 +120,7 @@ export default function TaskDetail() {
 
             <View style={{ flex: 1, minHeight: 12 }} />
 
-            {pr ? (
+            {task.state === 'ANSWERED' ? null : pr ? (
               <Button
                 title={`Open PR${prNumber(pr) ? ` #${prNumber(pr)}` : ''} ↗`}
                 onPress={() => openUrl(pr)}
@@ -176,6 +183,7 @@ const styles = StyleSheet.create({
   tokenCost: { fontSize: 16, fontWeight: '700', color: C.ready, marginLeft: 4 },
   tokenSub: { fontSize: 12, color: C.muted, marginTop: -8 },
   summary: { fontSize: 13.5, color: C.text2, lineHeight: 21 },
+  answerTxt: { fontSize: 14, color: C.text, lineHeight: 22 },
   progRow: { flexDirection: 'row', gap: 8, alignItems: 'flex-start', paddingVertical: 2 },
   progGlyph: { fontSize: 13.5, width: 14 },
   progTxt: { flex: 1, fontSize: 13.5, color: C.text2, lineHeight: 21 },

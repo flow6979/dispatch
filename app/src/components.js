@@ -99,6 +99,7 @@ function fmtCost(n) {
 function subFor(task) {
   const status = statusOf(task.state);
   const tok = (task.tokensUsed ? ` · ${fmtTokens(task.tokensUsed)} tokens` : '') + fmtCost(task.costUsd);
+  if (task.state === 'ANSWERED') return 'answered' + tok;
   if (status === 'ready' && task.prUrl) {
     const num = prNumber(task.prUrl);
     return (num ? `PR #${num} ready` : 'PR ready') + tok;

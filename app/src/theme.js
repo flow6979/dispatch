@@ -33,6 +33,7 @@ export function statusOf(state) {
     case 'PR_OPEN':
     case 'AWAITING_REVIEW':
     case 'MERGED':
+    case 'ANSWERED':
       return 'ready';
     case 'BLOCKED':
     case 'FAILED':
@@ -70,6 +71,7 @@ export function stateLabel(state) {
     RUNNING: 'running',
     TESTS: 'running tests',
     PR_OPEN: 'PR ready',
+    ANSWERED: 'answered',
     AWAITING_REVIEW: 'ready to review',
     NEEDS_INPUT: 'needs you',
     BLOCKED: 'blocked',

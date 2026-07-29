@@ -40,6 +40,7 @@ export default function Capture() {
   const [listening, setListening] = useState(false);
   const [sendError, setSendError] = useState(null);
   const [voiceErr, setVoiceErr] = useState(null);
+  const [mode, setMode] = useState('auto'); // auto | ask | build
   const baseTextRef = useRef('');
 
   const recent = tasks.slice(0, 5);
@@ -107,6 +108,7 @@ export default function Capture() {
         repo: context?.repo || null,
         baseBranch: context?.baseBranch || null,
         workBranch: context?.workBranch || null,
+        mode,
       });
       setText('');
       refresh();
@@ -172,6 +174,31 @@ export default function Capture() {
             )}
           </Pressable>
         </View>
+        <View style={styles.modeRow}>
+          {[
+            { k: 'auto', label: 'Auto' },
+            { k: 'ask', label: '💬 Ask' },
+            { k: 'build', label: '🔨 Build' },
+          ].map((m) => (
+            <Pressable
+              key={m.k}
+              onPress={() => setMode(m.k)}
+              style={[styles.modeChip, mode === m.k && styles.modeChipOn]}
+            >
+              <Text style={[styles.modeChipTxt, mode === m.k && styles.modeChipTxtOn]}>
+                {m.label}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+        <Text style={styles.modeHint}>
+          {mode === 'auto'
+            ? "Auto: I'll decide if this needs a PR or is just a question."
+            : mode === 'ask'
+            ? 'Ask: answer only — never opens a PR.'
+            : 'Build: always make code changes and open a PR.'}
+        </Text>
+
         {!hasRepo && !sendError && (
           <Pressable onPress={() => router.push('/repo-picker')}>
             <Text style={styles.repoHint}>
@@ -243,6 +270,19 @@ const styles = StyleSheet.create({
   hint: { fontSize: 14, color: C.text2 },
   repoHint: { fontSize: 12.5, color: C.needsyou, textAlign: 'center', marginTop: 4 },
   sendError: { fontSize: 12.5, color: C.blocked, textAlign: 'center', marginTop: 4 },
+  modeRow: { flexDirection: 'row', gap: 8, marginTop: 4 },
+  modeChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 20,
+    backgroundColor: C.surface2,
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  modeChipOn: { backgroundColor: C.accentSoft, borderColor: C.accent },
+  modeChipTxt: { fontSize: 13, color: C.text2, fontWeight: '600' },
+  modeChipTxtOn: { color: C.accent },
+  modeHint: { fontSize: 11.5, color: C.muted, textAlign: 'center', marginTop: 6 },
   inputRow: { flexDirection: 'row', alignItems: 'center', gap: 10, width: '100%' },
   input: {
     flex: 1,
