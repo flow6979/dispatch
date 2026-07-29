@@ -31,10 +31,13 @@ const DEFAULT_BUDGET_TOKENS = 250000;
 // Persistence (JSON file, read on boot, write on every change)
 // ---------------------------------------------------------------------------
 
-/** @type {{ tasks: Object<string, any>, context: any }} */
+/** @type {{ tasks: Object<string, any>, context: any, pairedRunners: Object<string, any> }} */
 let store = {
   tasks: {}, // id -> Task
   context: { repo: null, baseBranch: null, workBranch: null },
+  // runnerId -> { host, ghUser, name, pairedAt }. A runner is only used to run
+  // tasks once its machine has been explicitly approved from the phone.
+  pairedRunners: {},
 };
 
 function loadStore() {
@@ -45,11 +48,13 @@ function loadStore() {
         const parsed = JSON.parse(raw);
         store.tasks = parsed.tasks && typeof parsed.tasks === 'object' ? parsed.tasks : {};
         store.context = parsed.context || { repo: null, baseBranch: null, workBranch: null };
+        store.pairedRunners =
+          parsed.pairedRunners && typeof parsed.pairedRunners === 'object' ? parsed.pairedRunners : {};
       }
     }
   } catch (err) {
     console.error('[store] failed to load data.json, starting fresh:', err.message);
-    store = { tasks: {}, context: { repo: null, baseBranch: null, workBranch: null } };
+    store = { tasks: {}, context: { repo: null, baseBranch: null, workBranch: null }, pairedRunners: {} };
   }
 }
 
@@ -146,19 +151,46 @@ function broadcastTasksUpdate() {
   for (const sock of phones) safeSend(sock, payload);
 }
 
-function broadcastRunnerStatus(connected, runnerName) {
-  const payload = { type: 'runner_status', connected, runnerName: runnerName || null };
+function pairedRunnerEntries() {
+  return [...runners].filter((e) => e.runnerId && store.pairedRunners[e.runnerId]);
+}
+
+function runnersPublic() {
+  return [...runners].map((e) => ({
+    id: e.runnerId || null,
+    name: e.runnerName || 'runner',
+    host: e.host || null,
+    ghUser: e.ghUser || null,
+    paired: !!(e.runnerId && store.pairedRunners[e.runnerId]),
+  }));
+}
+
+function broadcastRunnerStatus() {
+  const paired = pairedRunnerEntries();
+  const payload = {
+    type: 'runner_status',
+    connected: paired.length > 0,
+    runnerName: paired.length ? paired[0].runnerName : null,
+    runners: runnersPublic(),
+  };
   for (const sock of phones) safeSend(sock, payload);
 }
 
 function sendToRunner(obj) {
-  // Send to the first connected runner (single-user MVP).
-  const first = runners.values().next().value;
+  // Only dispatch to an APPROVED runner. A connected-but-unapproved machine is
+  // ignored until the user pairs it from the phone.
+  const first = pairedRunnerEntries()[0];
   if (first) {
     safeSend(first.socket, obj);
     return true;
   }
-  console.warn('[runner] no runner connected; message dropped:', obj.type);
+  const anyConnected = runners.size > 0;
+  console.warn(
+    anyConnected
+      ? '[runner] a runner is connected but not approved; message held:'
+      : '[runner] no runner connected; message dropped:',
+    obj.type,
+  );
   return false;
 }
 
@@ -219,7 +251,7 @@ function proceedToRun(task) {
  * Terminal/HELD tasks are left untouched.
  */
 function resumeStuckTasks() {
-  if (runners.size === 0) return;
+  if (pairedRunnerEntries().length === 0) return;
   let resumed = 0;
   for (const task of Object.values(store.tasks)) {
     switch (task.state) {
@@ -250,13 +282,18 @@ function handleRunnerMessage(entry, msg) {
   switch (msg.type) {
     case 'register': {
       entry.runnerName = msg.runnerName || 'runner';
-      console.log('[runner] registered:', entry.runnerName, msg.capabilities || []);
-      broadcastRunnerStatus(true, entry.runnerName);
-      // Self-heal: re-drive any tasks that were left mid-flight because no
-      // runner was connected when they were created/confirmed. Without this,
-      // a task captured while the laptop runner is offline stays CAPTURED
-      // forever even after a runner comes online.
-      resumeStuckTasks();
+      entry.host = msg.host || null;
+      entry.ghUser = msg.ghUser || null;
+      entry.runnerId = msg.runnerId || `${entry.host || 'host'}:${entry.ghUser || 'user'}`;
+      const approved = !!store.pairedRunners[entry.runnerId];
+      console.log(
+        `[runner] registered: ${entry.runnerName} (${entry.runnerId}) approved=${approved}`,
+        msg.capabilities || [],
+      );
+      broadcastRunnerStatus();
+      // Self-heal only for approved runners — re-drive tasks stranded because
+      // no approved runner was connected when they were created/confirmed.
+      if (approved) resumeStuckTasks();
       break;
     }
     case 'repos': {
@@ -391,7 +428,45 @@ async function build() {
   // --- REST ---------------------------------------------------------------
 
   app.get('/api/health', async () => {
-    return { ok: true, runners: runners.size };
+    // `runners` = approved+connected (drives the phone's connected indicator).
+    // `pendingRunners` = connected but awaiting approval.
+    const paired = pairedRunnerEntries().length;
+    return { ok: true, runners: paired, pendingRunners: runners.size - paired };
+  });
+
+  // List every connected runner with its real identity + approval status.
+  app.get('/api/runners', async () => {
+    return { runners: runnersPublic() };
+  });
+
+  // Approve (pair) a connected machine so it can run tasks.
+  app.post('/api/runners/:id/approve', async (req, reply) => {
+    const id = decodeURIComponent(req.params.id);
+    const entry = [...runners].find((e) => e.runnerId === id);
+    if (!entry) {
+      reply.code(404);
+      return { error: 'runner_not_connected' };
+    }
+    store.pairedRunners[id] = {
+      host: entry.host || null,
+      ghUser: entry.ghUser || null,
+      name: entry.runnerName || 'runner',
+      pairedAt: now(),
+    };
+    saveStore();
+    console.log('[runner] approved:', id);
+    broadcastRunnerStatus();
+    resumeStuckTasks(); // run anything that was waiting for approval
+    return { ok: true, runners: runnersPublic() };
+  });
+
+  // Revoke a previously-approved machine.
+  app.post('/api/runners/:id/revoke', async (req) => {
+    const id = decodeURIComponent(req.params.id);
+    delete store.pairedRunners[id];
+    saveStore();
+    broadcastRunnerStatus();
+    return { ok: true, runners: runnersPublic() };
   });
 
   app.get('/api/repos', async () => {
@@ -515,7 +590,7 @@ async function build() {
       socket.on('close', () => {
         runners.delete(entry);
         console.log('[ws] runner disconnected. total runners:', runners.size);
-        broadcastRunnerStatus(false, entry.runnerName);
+        broadcastRunnerStatus();
       });
 
       socket.on('error', (err) => {
@@ -531,10 +606,12 @@ async function build() {
 
       // Immediately push current state so the phone is in sync.
       safeSend(socket, { type: 'tasks_update', tasks: tasksNewestFirst() });
+      const paired0 = pairedRunnerEntries();
       safeSend(socket, {
         type: 'runner_status',
-        connected: runners.size > 0,
-        runnerName: (runners.values().next().value || {}).runnerName || null,
+        connected: paired0.length > 0,
+        runnerName: paired0.length ? paired0[0].runnerName : null,
+        runners: runnersPublic(),
       });
 
       socket.on('message', (raw) => {

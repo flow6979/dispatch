@@ -53,6 +53,19 @@ const WS_SCHEME = WS_SECURE ? 'wss' : 'ws';
 const TOKEN = 'dev-token';
 const RUNNER_NAME = process.env.RUNNER_NAME || os.hostname();
 
+// Real machine identity, sent on register so the phone can show WHAT is
+// connecting and require explicit approval before it's used.
+function ghLoginSync() {
+  try {
+    const res = spawnSync('gh', ['api', 'user', '--jq', '.login'], { encoding: 'utf8', timeout: 10000 });
+    if (res.status === 0) return String(res.stdout || '').trim() || null;
+  } catch (_) { /* ignore */ }
+  return null;
+}
+const GH_USER = ghLoginSync();
+const HOST = os.hostname();
+const RUNNER_ID = `${HOST}:${GH_USER || 'unknown'}`;
+
 // Stub mode is the DEFAULT: ON when DISPATCH_STUB is unset OR equals "1".
 // Only DISPATCH_STUB=0 turns REAL mode on.
 const STUB_MODE = process.env.DISPATCH_STUB !== '0';
@@ -622,7 +635,14 @@ function startWsClient() {
     ws.on('open', () => {
       backoff = 1000; // reset on successful connect
       log('connected; registering');
-      emit({ type: 'register', runnerName: RUNNER_NAME, capabilities: ['git', 'gh', 'claude'] });
+      emit({
+        type: 'register',
+        runnerName: RUNNER_NAME,
+        host: HOST,
+        ghUser: GH_USER,
+        runnerId: RUNNER_ID,
+        capabilities: ['git', 'gh', 'claude'],
+      });
       // Heartbeat: Render's free tier silently drops idle WebSocket
       // connections. Without this the runner half-closes — it thinks it's
       // connected while the backend shows 0 runners and tasks wait forever.
