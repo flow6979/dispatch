@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, Switch } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Switch, Pressable, ActivityIndicator } from 'react-native';
 import { C } from '../../src/theme';
 import { StatusBarFaux, BackRow } from '../../src/components';
 import { CapLabel, Dot, OfflineBanner } from '../../src/ui';
-import { useHealth } from '../../src/hooks';
+import { useRunners } from '../../src/hooks';
+import { api } from '../../src/api';
 
 function Row({ label, value, children, first }) {
   return (
@@ -15,12 +16,22 @@ function Row({ label, value, children, first }) {
 }
 
 export default function Settings() {
-  const { health, offline } = useHealth();
+  const { runners, offline, refresh } = useRunners();
   const [push, setPush] = useState(true);
   const [quiet, setQuiet] = useState(true);
+  const [acting, setActing] = useState(null);
 
-  const runners = health?.runners ?? 0;
-  const online = !offline && runners > 0;
+  const approved = runners.filter((r) => r.paired);
+  const ghUser = (approved[0] || runners[0] || {}).ghUser || null;
+
+  async function approve(id) {
+    setActing(id);
+    try { await api.approveRunner(id); refresh(); } catch (_) {} finally { setActing(null); }
+  }
+  async function revoke(id) {
+    setActing(id);
+    try { await api.revokeRunner(id); refresh(); } catch (_) {} finally { setActing(null); }
+  }
 
   return (
     <View style={styles.screen}>
@@ -29,24 +40,44 @@ export default function Settings() {
       <BackRow title="Settings" onBack={false} />
       <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.body}>
         <CapLabel style={styles.head}>Runners</CapLabel>
-        <View style={styles.row}>
-          <Dot status={online ? 'ready' : 'blocked'} style={{ marginRight: 11 }} />
-          <View style={{ flex: 1 }}>
-            <Text style={styles.rowLabel}>
-              {online ? 'MacBook Pro' : 'No runner connected'}
-            </Text>
-            <Text style={styles.rowSub}>
-              {offline
-                ? 'backend offline'
-                : `${runners} runner${runners === 1 ? '' : 's'} · ~/dispatch-workspace`}
-            </Text>
+        {runners.length === 0 && (
+          <View style={styles.row}>
+            <Dot status="blocked" style={{ marginRight: 11 }} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowLabel}>No machine connected</Text>
+              <Text style={styles.rowSub}>
+                {offline ? 'backend offline' : 'start the runner on your laptop'}
+              </Text>
+            </View>
           </View>
-        </View>
-        <View style={styles.row}>
-          <Text style={[styles.rowLabel, { color: C.accent }]}>
-            + Pair another machine
-          </Text>
-        </View>
+        )}
+        {runners.map((r) => (
+          <View key={r.id} style={styles.row}>
+            <Dot status={r.paired ? 'ready' : 'needsyou'} style={{ marginRight: 11 }} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowLabel}>{r.host || r.name}</Text>
+              <Text style={styles.rowSub}>
+                {r.ghUser ? `@${r.ghUser}` : 'unknown account'} ·{' '}
+                {r.paired ? 'approved' : 'awaiting approval'}
+              </Text>
+            </View>
+            {acting === r.id ? (
+              <ActivityIndicator size="small" color={C.accent} />
+            ) : r.paired ? (
+              <Pressable onPress={() => revoke(r.id)}>
+                <Text style={[styles.action, { color: C.muted }]}>Revoke</Text>
+              </Pressable>
+            ) : (
+              <Pressable onPress={() => approve(r.id)}>
+                <Text style={[styles.action, { color: C.accent }]}>Approve</Text>
+              </Pressable>
+            )}
+          </View>
+        ))}
+        <Text style={styles.hint}>
+          A machine must be approved here before it can run your tasks. To add one,
+          start the Dispatch runner on it and approve it above.
+        </Text>
 
         <CapLabel style={styles.head}>Notifications</CapLabel>
         <Row label="Push">
@@ -72,7 +103,7 @@ export default function Settings() {
         <Row label="Task budget" value="250k tokens" />
 
         <CapLabel style={styles.head}>Account</CapLabel>
-        <Row label="GitHub" value="flow6979" />
+        <Row label="GitHub" value={ghUser ? `@${ghUser}` : 'not connected'} />
       </ScrollView>
     </View>
   );
@@ -92,4 +123,6 @@ const styles = StyleSheet.create({
   rowLabel: { flex: 1, fontSize: 14, color: C.text },
   rowSub: { fontSize: 12, color: C.muted, marginTop: 2 },
   rowVal: { fontSize: 14, color: C.text2 },
+  action: { fontSize: 13, fontWeight: '700' },
+  hint: { fontSize: 12, color: C.muted, marginTop: 8, lineHeight: 18 },
 });

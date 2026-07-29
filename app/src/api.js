@@ -32,6 +32,11 @@ async function req(path, opts = {}) {
 export const api = {
   health: () => req('/api/health'),
   repos: () => req('/api/repos'),
+  runners: () => req('/api/runners'),
+  approveRunner: (id) =>
+    req(`/api/runners/${encodeURIComponent(id)}/approve`, { method: 'POST' }),
+  revokeRunner: (id) =>
+    req(`/api/runners/${encodeURIComponent(id)}/revoke`, { method: 'POST' }),
   getContext: () => req('/api/context'),
   setContext: (body) =>
     req('/api/context', { method: 'POST', body: JSON.stringify(body) }),

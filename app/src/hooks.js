@@ -55,3 +55,9 @@ export function useContext(intervalMs = 3000) {
   const { data, offline, refresh } = usePoll(() => api.getContext(), intervalMs);
   return { context: data, offline, refresh };
 }
+
+export function useRunners(intervalMs = 3000) {
+  const { data, offline, refresh } = usePoll(() => api.runners(), intervalMs);
+  const runners = (data && data.runners) || [];
+  return { runners, offline, refresh };
+}

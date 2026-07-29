@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,8 +7,21 @@ import {
   TextInput,
   ScrollView,
   ActivityIndicator,
+  PermissionsAndroid,
+  Platform,
 } from 'react-native';
 import { router } from 'expo-router';
+
+// On-device speech-to-text (free, no API key). Loaded defensively so the app
+// still runs if the native module isn't available (e.g. web, or a device with
+// no speech recognizer) — the mic just falls back to a text-only hint.
+let Speech = null;
+try {
+  Speech = require('expo-speech-recognition').ExpoSpeechRecognitionModule;
+} catch (_) {
+  Speech = null;
+}
+const VOICE_AVAILABLE = !!Speech && Platform.OS !== 'web';
 import { C, statusOf } from '../../src/theme';
 import { StatusBarFaux, ContextBar, TaskRow } from '../../src/components';
 import { CapLabel, OfflineBanner, NoRunnerBanner } from '../../src/ui';
@@ -20,13 +33,68 @@ export default function Capture() {
   const { context } = useContext();
   const { health } = useHealth();
   const noRunner = !offline && (health?.runners ?? 0) === 0;
+  const pendingApproval = noRunner && (health?.pendingRunners ?? 0) > 0;
   const hasRepo = !!context?.repo;
   const [text, setText] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [listening, setListening] = useState(false);
   const [sendError, setSendError] = useState(null);
+  const [voiceErr, setVoiceErr] = useState(null);
+  const baseTextRef = useRef('');
 
   const recent = tasks.slice(0, 5);
+
+  // Wire speech-recognition events once (uses the module's event emitter so we
+  // can guard on availability rather than a conditionally-called hook).
+  useEffect(() => {
+    if (!VOICE_AVAILABLE) return;
+    const subs = [];
+    try {
+      subs.push(
+        Speech.addListener('result', (e) => {
+          const phrase = (e.results && e.results[0] && e.results[0].transcript) || '';
+          if (phrase) {
+            const base = baseTextRef.current;
+            setText((base ? base + ' ' : '') + phrase);
+          }
+        }),
+      );
+      subs.push(
+        Speech.addListener('error', (e) => {
+          setVoiceErr((e && (e.message || e.error)) || 'Voice failed — type instead.');
+          setListening(false);
+        }),
+      );
+      subs.push(Speech.addListener('end', () => setListening(false)));
+    } catch (_) { /* ignore */ }
+    return () => { subs.forEach((s) => { try { s.remove(); } catch (_) {} }); };
+  }, []);
+
+  async function toggleVoice() {
+    if (!VOICE_AVAILABLE) {
+      setVoiceErr('Voice not available on this device — type below.');
+      return;
+    }
+    setVoiceErr(null);
+    if (listening) {
+      try { Speech.stop(); } catch (_) {}
+      setListening(false);
+      return;
+    }
+    try {
+      const perm = await Speech.requestPermissionsAsync();
+      if (!perm || !perm.granted) {
+        setVoiceErr('Microphone permission denied.');
+        return;
+      }
+      baseTextRef.current = text.trim();
+      setListening(true);
+      Speech.start({ lang: 'en-US', interimResults: true, continuous: false });
+    } catch (e) {
+      setVoiceErr('Could not start voice — type below.');
+      setListening(false);
+    }
+  }
 
   async function submit() {
     const promptText = text.trim();
@@ -60,19 +128,25 @@ export default function Capture() {
     <View style={styles.screen}>
       <StatusBarFaux />
       <OfflineBanner visible={offline} />
-      <NoRunnerBanner visible={noRunner} />
+      <NoRunnerBanner visible={noRunner} pending={pendingApproval} />
       <ContextBar context={context} offline={offline} />
 
       <View style={styles.captureArea}>
         <Pressable
-          onPress={() => setListening((v) => !v)}
+          onPress={toggleVoice}
           style={[styles.mic, listening && styles.micOn]}
         >
           <View style={styles.micStand} />
           <View style={styles.micBody} />
         </Pressable>
         <Text style={styles.hint}>
-          {listening ? 'Listening… (v0 placeholder — type below)' : 'Hold to speak'}
+          {voiceErr
+            ? voiceErr
+            : listening
+            ? 'Listening… tap to stop'
+            : VOICE_AVAILABLE
+            ? 'Tap to speak'
+            : 'Type your task below'}
         </Text>
 
         <View style={styles.inputRow}>

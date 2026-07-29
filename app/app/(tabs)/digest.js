@@ -15,9 +15,8 @@ export default function Digest() {
   const blocked = tasks.filter((t) => statusOf(t.state) === 'blocked');
 
   const repos = new Set(tasks.map((t) => t.repo).filter(Boolean));
-  const tokens = tasks.reduce((sum, t) => sum + (t.budgetTokens ? 0 : 0), 0);
-  // rough token estimate from progress count (backend does not report spend in v0)
-  const spent = tasks.length * 40000;
+  // Real spend: sum of actual tokens reported by the runner per task.
+  const spent = tasks.reduce((sum, t) => sum + (t.tokensUsed || 0), 0);
 
   return (
     <View style={styles.screen}>

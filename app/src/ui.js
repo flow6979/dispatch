@@ -59,13 +59,15 @@ export function OfflineBanner({ visible }) {
   );
 }
 
-export function NoRunnerBanner({ visible }) {
+export function NoRunnerBanner({ visible, pending }) {
   if (!visible) return null;
   return (
     <View style={styles.warn}>
       <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: C.needsyou }} />
       <Text style={styles.warnTxt}>
-        No runner connected — start your laptop runner or tasks will wait.
+        {pending
+          ? 'A machine is waiting for approval — approve it in Settings before tasks can run.'
+          : 'No runner connected — start your laptop runner or tasks will wait.'}
       </Text>
     </View>
   );
