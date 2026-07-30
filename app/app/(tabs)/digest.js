@@ -5,6 +5,7 @@ import { C, statusOf } from '../../src/theme';
 import { StatusBarFaux } from '../../src/components';
 import { lastMessage } from '../../src/components';
 import { Card, Dot, OfflineBanner } from '../../src/ui';
+import { FadeIn } from '../../src/anim';
 import { useTasks } from '../../src/hooks';
 
 export default function Digest() {
@@ -35,49 +36,47 @@ export default function Digest() {
               } repo${repos.size === 1 ? '' : 's'}`}
         </Text>
 
-        <Card style={[styles.card, { borderColor: 'rgba(245,166,35,0.35)' }]}>
-          <View style={styles.row}>
-            <Dot status="needsyou" />
-            <Text style={styles.cardTitle}>
-              {needs.length} need{needs.length === 1 ? 's' : ''} a decision
+        <FadeIn delay={40}>
+          <Card style={[styles.card, { borderColor: 'rgba(245,166,35,0.35)' }]}>
+            <View style={styles.row}>
+              <Dot status="needsyou" />
+              <Text style={styles.cardTitle}>
+                {needs.length} need{needs.length === 1 ? 's' : ''} a decision
+              </Text>
+            </View>
+            <Text style={styles.cardBody}>
+              {needs.length
+                ? `${trim(needs[0].promptText)} — pick before it proceeds.`
+                : 'No decisions waiting on you.'}
             </Text>
-          </View>
-          <Text style={styles.cardBody}>
-            {needs.length
-              ? `${trim(needs[0].promptText)} — pick before it proceeds.`
-              : 'No decisions waiting on you.'}
-          </Text>
-        </Card>
+          </Card>
+        </FadeIn>
 
-        <Card style={styles.card}>
-          <View style={styles.row}>
-            <Dot status="ready" />
-            <Text style={styles.cardTitle}>
-              {ready.length} ready to review
+        <FadeIn delay={110}>
+          <Card style={styles.card}>
+            <View style={styles.row}>
+              <Dot status="ready" />
+              <Text style={styles.cardTitle}>{ready.length} ready to review</Text>
+            </View>
+            <Text style={styles.cardBody}>
+              {ready.length ? `Review "${trim(ready[0].promptText)}" first.` : 'Nothing to review yet.'}
             </Text>
-          </View>
-          <Text style={styles.cardBody}>
-            {ready.length
-              ? `Review "${trim(ready[0].promptText)}" first.`
-              : 'Nothing to review yet.'}
-          </Text>
-        </Card>
+          </Card>
+        </FadeIn>
 
-        <Card style={styles.card}>
-          <View style={styles.row}>
-            <Dot status="blocked" />
-            <Text style={styles.cardTitle}>
-              {blocked.length} blocked
+        <FadeIn delay={180}>
+          <Card style={styles.card}>
+            <View style={styles.row}>
+              <Dot status="blocked" />
+              <Text style={styles.cardTitle}>{blocked.length} blocked</Text>
+            </View>
+            <Text style={styles.cardBody}>
+              {blocked.length
+                ? `${trim(blocked[0].promptText)} — ${lastMessage(blocked[0]) || 'needs a hand'}.`
+                : 'Nothing blocked.'}
             </Text>
-          </View>
-          <Text style={styles.cardBody}>
-            {blocked.length
-              ? `${trim(blocked[0].promptText)} — ${
-                  lastMessage(blocked[0]) || 'needs a hand'
-                }.`
-              : 'Nothing blocked.'}
-          </Text>
-        </Card>
+          </Card>
+        </FadeIn>
 
         <View style={styles.footer}>
           <Text style={styles.footerTxt}>spent so far</Text>

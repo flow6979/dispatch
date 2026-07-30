@@ -2,6 +2,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { C, STATUS_COLOR } from './theme';
+import { PressableScale } from './anim';
 
 export function Dot({ status, size = 10, style }) {
   return (
@@ -33,19 +34,13 @@ export function Button({ title, onPress, variant = 'pri', small, style, disabled
   const base = variant === 'pri' ? styles.btnPri : styles.btnSec;
   const txt = variant === 'pri' ? styles.btnPriTxt : styles.btnSecTxt;
   return (
-    <Pressable
+    <PressableScale
       onPress={disabled ? undefined : onPress}
-      style={({ pressed }) => [
-        styles.btn,
-        small && styles.btnSm,
-        base,
-        disabled && { opacity: 0.5 },
-        pressed && !disabled && { opacity: 0.85 },
-        style,
-      ]}
+      disabled={disabled}
+      style={[styles.btn, small && styles.btnSm, base, disabled && { opacity: 0.5 }, style]}
     >
       <Text style={[styles.btnTxt, small && styles.btnSmTxt, txt]}>{title}</Text>
-    </Pressable>
+    </PressableScale>
   );
 }
 

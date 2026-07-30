@@ -6,6 +6,7 @@ import { router } from 'expo-router';
 import { C } from './theme';
 import { Dot } from './ui';
 import { statusOf, stateLabel } from './theme';
+import { PressableScale, FadeIn } from './anim';
 
 // On a real device the OS already draws the status bar, so we must NOT render a
 // second fake one (that showed a frozen "9:41 ●●● ▢" bar). Here we just reserve
@@ -52,26 +53,28 @@ export function ContextBar({ context, offline }) {
   );
 }
 
-export function TaskRow({ task, onPress, showSub = true }) {
+export function TaskRow({ task, onPress, showSub = true, index = 0 }) {
   const status = statusOf(task.state);
   const pct = latestPct(task);
   const running = status === 'running';
   const sub = subFor(task);
   return (
-    <Pressable style={tr.row} onPress={onPress}>
-      <Dot status={status} style={{ marginTop: 5 }} />
-      <View style={{ flex: 1 }}>
-        <Text style={tr.title} numberOfLines={2}>
-          {task.promptText || '(untitled task)'}
-        </Text>
-        {showSub && !!sub && (
-          <Text style={tr.sub} numberOfLines={1}>
-            {sub}
+    <FadeIn delay={Math.min(index, 8) * 45}>
+      <PressableScale style={tr.row} onPress={onPress} scaleTo={0.985}>
+        <Dot status={status} style={{ marginTop: 5 }} />
+        <View style={{ flex: 1 }}>
+          <Text style={tr.title} numberOfLines={2}>
+            {task.promptText || '(untitled task)'}
           </Text>
-        )}
-      </View>
-      {running && pct != null && <Text style={tr.prog}>{pct}%</Text>}
-    </Pressable>
+          {showSub && !!sub && (
+            <Text style={tr.sub} numberOfLines={1}>
+              {sub}
+            </Text>
+          )}
+        </View>
+        {running && pct != null && <Text style={tr.prog}>{pct}%</Text>}
+      </PressableScale>
+    </FadeIn>
   );
 }
 

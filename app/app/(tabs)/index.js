@@ -9,8 +9,10 @@ import {
   ActivityIndicator,
   PermissionsAndroid,
   Platform,
+  Animated,
 } from 'react-native';
 import { router } from 'expo-router';
+import { PressableScale, FadeIn, usePulse } from '../../src/anim';
 
 // On-device speech-to-text (free, no API key). Loaded defensively so the app
 // still runs if the native module isn't available (e.g. web, or a device with
@@ -41,6 +43,7 @@ export default function Capture() {
   const [sendError, setSendError] = useState(null);
   const [voiceErr, setVoiceErr] = useState(null);
   const [mode, setMode] = useState('auto'); // auto | ask | build
+  const pulse = usePulse(listening);
   const baseTextRef = useRef('');
 
   const recent = tasks.slice(0, 5);
@@ -134,13 +137,23 @@ export default function Capture() {
       <ContextBar context={context} offline={offline} />
 
       <View style={styles.captureArea}>
-        <Pressable
-          onPress={toggleVoice}
-          style={[styles.mic, listening && styles.micOn]}
-        >
-          <View style={styles.micStand} />
-          <View style={styles.micBody} />
-        </Pressable>
+        <View style={styles.micWrap}>
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.micRing,
+              {
+                opacity: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.35, 0] }),
+                transform: [{ scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.7] }) }],
+                backgroundColor: listening ? C.needsyou : C.accent,
+              },
+            ]}
+          />
+          <PressableScale onPress={toggleVoice} style={[styles.mic, listening && styles.micOn]} scaleTo={0.92}>
+            <View style={styles.micStand} />
+            <View style={styles.micBody} />
+          </PressableScale>
+        </View>
         <Text style={styles.hint}>
           {voiceErr
             ? voiceErr
@@ -162,17 +175,18 @@ export default function Capture() {
             returnKeyType="send"
             multiline={false}
           />
-          <Pressable
+          <PressableScale
             style={[styles.send, (!text.trim() || submitting) && { opacity: 0.4 }]}
             onPress={submit}
             disabled={!text.trim() || submitting}
+            scaleTo={0.9}
           >
             {submitting ? (
               <ActivityIndicator size="small" color="#fff" />
             ) : (
               <Text style={styles.sendTxt}>→</Text>
             )}
-          </Pressable>
+          </PressableScale>
         </View>
         <View style={styles.modeRow}>
           {[
@@ -219,10 +233,11 @@ export default function Capture() {
               {offline ? 'Waiting for backend…' : 'No tasks yet. Capture one above.'}
             </Text>
           )}
-          {recent.map((t) => (
+          {recent.map((t, i) => (
             <TaskRow
               key={t.id}
               task={t}
+              index={i}
               onPress={() =>
                 statusOf(t.state) === 'needsyou'
                   ? router.push(`/spec/${t.id}`)
@@ -244,6 +259,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 16,
     padding: 24,
+  },
+  micWrap: { width: 104, height: 104, alignItems: 'center', justifyContent: 'center' },
+  micRing: {
+    position: 'absolute',
+    width: 104,
+    height: 104,
+    borderRadius: 52,
   },
   mic: {
     width: 104,

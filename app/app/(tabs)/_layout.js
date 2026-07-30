@@ -1,10 +1,27 @@
-import React from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import React, { useRef, useEffect } from 'react';
+import { View, Text, Pressable, StyleSheet, Animated } from 'react-native';
 import { Tabs } from 'expo-router';
 import { C } from '../../src/theme';
 
-// Custom tab bar drawn to match the mockup: 4 tabs, accent for active.
-function TabBar({ state, descriptors, navigation }) {
+function TabButton({ focused, glyph, label, onPress }) {
+  const a = useRef(new Animated.Value(focused ? 1 : 0)).current;
+  useEffect(() => {
+    Animated.spring(a, { toValue: focused ? 1 : 0, useNativeDriver: true, speed: 18, bounciness: 9 }).start();
+  }, [focused, a]);
+  const scale = a.interpolate({ inputRange: [0, 1], outputRange: [1, 1.18] });
+  const lift = a.interpolate({ inputRange: [0, 1], outputRange: [0, -2] });
+  return (
+    <Pressable style={styles.tab} onPress={onPress}>
+      <Animated.Text style={[styles.ic, focused && styles.on, { transform: [{ scale }, { translateY: lift }] }]}>
+        {glyph}
+      </Animated.Text>
+      <Text style={[styles.label, focused && styles.on]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+// Custom tab bar drawn to match the mockup, with an animated active icon.
+function TabBar({ state, navigation }) {
   const labels = { index: 'Capture', tasks: 'Tasks', map: 'Map', digest: 'Digest', settings: 'Settings' };
   const glyphs = { index: '◉', tasks: '▤', map: '◈', digest: '☰', settings: '⚙' };
   return (
@@ -15,18 +32,11 @@ function TabBar({ state, descriptors, navigation }) {
           const idx = state.routes.indexOf(route);
           const focused = state.index === idx;
           const onPress = () => {
-            const event = navigation.emit({
-              type: 'tabPress',
-              target: route.key,
-              canPreventDefault: true,
-            });
+            const event = navigation.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
             if (!focused && !event.defaultPrevented) navigation.navigate(route.name);
           };
           return (
-            <Pressable key={route.key} style={styles.tab} onPress={onPress}>
-              <Text style={[styles.ic, focused && styles.on]}>{glyphs[route.name]}</Text>
-              <Text style={[styles.label, focused && styles.on]}>{labels[route.name]}</Text>
-            </Pressable>
+            <TabButton key={route.key} focused={focused} glyph={glyphs[route.name]} label={labels[route.name]} onPress={onPress} />
           );
         })}
     </View>
