@@ -94,11 +94,20 @@ async function req(path, opts = {}) {
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(opts.headers || {}) },
   });
   if (res.status === 401) {
-    // token invalid (revoked / backend reset) — drop it and require pairing
+    // Token invalid (e.g. backend wiped it on a redeploy) — drop it, re-enroll,
+    // and RETRY the request once so the call transparently recovers.
     authToken = null;
     try { await AsyncStorage.removeItem(TOKEN_KEY); } catch (_) {}
     await bootstrapAuth();
-    throw new Error('unauthorized');
+    const t2 = authToken || SECRET;
+    const res2 = await fetch(`${API_BASE}${path}`, {
+      ...opts,
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${t2}`, ...(opts.headers || {}) },
+    });
+    if (res2.status === 401) { setStatus('needs-pairing'); throw new Error('unauthorized'); }
+    if (!res2.ok) { const t = await res2.text().catch(() => ''); throw new Error(`HTTP ${res2.status} ${path} ${t}`.trim()); }
+    const ct2 = res2.headers.get('content-type') || '';
+    return ct2.includes('application/json') ? res2.json() : null;
   }
   if (!res.ok) {
     const text = await res.text().catch(() => '');
