@@ -84,7 +84,9 @@ function ghLoginSync() {
 }
 let GH_USER = ghLoginSync();
 const HOST = os.hostname();
-const RUNNER_ID = `${HOST}:${GH_USER || 'unknown'}`;
+// Identity is the runner NAME (defaults to hostname) so distinct machines — or
+// several runners on one box with different RUNNER_NAME — get distinct ids.
+const RUNNER_ID = process.env.DISPATCH_RUNNER_ID || `${RUNNER_NAME}:${GH_USER || 'unknown'}`;
 
 // List all gh accounts logged in on this machine + the active one.
 function ghAccountsSync() {

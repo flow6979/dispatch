@@ -47,6 +47,8 @@ let store = {
   deviceTokens: {},
   // user-editable settings
   settings: { digestTime: '07:30', autonomy: 'auto', taskBudgetUsd: 3, push: true, quietHours: true },
+  // which approved runner (PC) tasks are dispatched to
+  selectedRunnerId: null,
 };
 
 const DEFAULT_SETTINGS = { digestTime: '07:30', autonomy: 'auto', taskBudgetUsd: 3, push: true, quietHours: true };
@@ -64,6 +66,7 @@ function loadStore() {
         store.deviceTokens =
           parsed.deviceTokens && typeof parsed.deviceTokens === 'object' ? parsed.deviceTokens : {};
         store.settings = { ...DEFAULT_SETTINGS, ...(parsed.settings && typeof parsed.settings === 'object' ? parsed.settings : {}) };
+        store.selectedRunnerId = parsed.selectedRunnerId || null;
       }
     }
   } catch (err) {
@@ -99,6 +102,8 @@ function scheduleStateBackup() {
         context: store.context,
         pairedRunners: store.pairedRunners,
         deviceTokens: store.deviceTokens,
+        settings: store.settings,
+        selectedRunnerId: store.selectedRunnerId,
       },
     });
   }, 500);
@@ -251,21 +256,32 @@ function pairedRunnerEntries() {
   return [...runners].filter((e) => e.runnerId && store.pairedRunners[e.runnerId]);
 }
 
-// Prefer an approved runner whose socket is actually OPEN. During a runner
-// restart two entries can briefly coexist (the dead half-open one + the fresh
-// one); sending to the dead socket silently drops the message.
+// Pick the runner to dispatch to: the user-selected one if it's approved and
+// connected, otherwise the first live approved runner. (Prefer an OPEN socket —
+// during a runner restart a dead half-open entry can briefly coexist.)
 function liveRunnerEntry() {
   const paired = pairedRunnerEntries();
-  return paired.find((e) => e.socket && e.socket.readyState === 1) || paired[0] || null;
+  const open = paired.filter((e) => e.socket && e.socket.readyState === 1);
+  const pool = open.length ? open : paired;
+  if (store.selectedRunnerId) {
+    const sel = pool.find((e) => e.runnerId === store.selectedRunnerId);
+    if (sel) return sel;
+  }
+  return pool[0] || null;
 }
 
 function runnersPublic() {
+  const live = liveRunnerEntry();
   return [...runners].map((e) => ({
     id: e.runnerId || null,
     name: e.runnerName || 'runner',
     host: e.host || null,
     ghUser: e.ghUser || null,
     paired: !!(e.runnerId && store.pairedRunners[e.runnerId]),
+    // 'selected' = the user's chosen PC; 'active' = the one currently receiving
+    // tasks (selected if connected, else the fallback).
+    selected: !!(e.runnerId && e.runnerId === store.selectedRunnerId),
+    active: !!(live && e.runnerId && e.runnerId === live.runnerId),
   }));
 }
 
@@ -434,6 +450,8 @@ function handleRunnerMessage(entry, msg) {
         if (s.context) store.context = s.context;
         if (s.pairedRunners && typeof s.pairedRunners === 'object') store.pairedRunners = s.pairedRunners;
         if (s.deviceTokens && typeof s.deviceTokens === 'object') store.deviceTokens = s.deviceTokens;
+        if (s.settings && typeof s.settings === 'object') store.settings = { ...store.settings, ...s.settings };
+        if (s.selectedRunnerId) store.selectedRunnerId = s.selectedRunnerId;
         saveStore();
         console.log(
           `[state] restored from runner backup: ${Object.keys(store.tasks).length} tasks, ${Object.keys(store.pairedRunners).length} paired`,
@@ -692,6 +710,7 @@ async function build() {
       name: entry.runnerName || 'runner',
       pairedAt: now(),
     };
+    if (!store.selectedRunnerId) store.selectedRunnerId = id; // first approved = default
     saveStore();
     // Issue a per-device token (revocable) and hand it over the open socket.
     ensureRunnerToken(entry);
@@ -701,10 +720,25 @@ async function build() {
     return { ok: true, runners: runnersPublic() };
   });
 
+  // Choose which approved runner (PC) tasks are dispatched to.
+  app.post('/api/runners/:id/select', async (req, reply) => {
+    const id = decodeURIComponent(req.params.id);
+    if (!store.pairedRunners[id]) { reply.code(400); return { error: 'not_approved' }; }
+    store.selectedRunnerId = id;
+    saveStore();
+    broadcastRunnerStatus();
+    console.log('[runner] selected:', id);
+    return { ok: true, runners: runnersPublic() };
+  });
+
   // Revoke a previously-approved machine.
   app.post('/api/runners/:id/revoke', async (req) => {
     const id = decodeURIComponent(req.params.id);
     delete store.pairedRunners[id];
+    if (store.selectedRunnerId === id) {
+      // fall back to another approved runner, if any
+      store.selectedRunnerId = Object.keys(store.pairedRunners)[0] || null;
+    }
     // Also revoke any device token issued to this runner.
     for (const t of Object.keys(store.deviceTokens)) {
       if (store.deviceTokens[t].kind === 'runner' && store.deviceTokens[t].id === id) {

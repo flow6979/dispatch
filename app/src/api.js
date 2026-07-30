@@ -125,6 +125,7 @@ export const api = {
   runners: () => req('/api/runners'),
   approveRunner: (id) => req(`/api/runners/${encodeURIComponent(id)}/approve`, { method: 'POST' }),
   revokeRunner: (id) => req(`/api/runners/${encodeURIComponent(id)}/revoke`, { method: 'POST' }),
+  selectRunner: (id) => req(`/api/runners/${encodeURIComponent(id)}/select`, { method: 'POST' }),
   newPairingCode: () => req('/api/pairing/new', { method: 'POST' }),
   settings: () => req('/api/settings'),
   setSettings: (body) => req('/api/settings', { method: 'POST', body: JSON.stringify(body) }),

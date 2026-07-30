@@ -62,6 +62,9 @@ export default function Settings() {
   }
   async function approve(id) { setActing(id); try { await api.approveRunner(id); } catch (_) {} finally { setActing(null); } }
   async function revoke(id) { setActing(id); try { await api.revokeRunner(id); } catch (_) {} finally { setActing(null); } }
+  async function selectRunner(id) { setActing(id); try { await api.selectRunner(id); } catch (_) {} finally { setActing(null); } }
+
+  const approvedCount = runners.filter((r) => r.paired).length;
 
   async function genPairCode() {
     setPairBusy(true); setPairErr(null); setPairCode(null);
@@ -87,17 +90,35 @@ export default function Settings() {
           </View>
         )}
         {runners.map((r) => (
-          <View key={r.id} style={styles.row}>
-            <Dot status={r.paired ? 'ready' : 'needsyou'} style={{ marginRight: 11 }} />
+          <Pressable key={r.id} style={styles.row} onPress={r.paired && !r.selected ? () => selectRunner(r.id) : undefined}>
+            {r.paired ? (
+              <View style={[styles.radio, r.selected && styles.radioOn]}>
+                {r.selected ? <View style={styles.radioDot} /> : null}
+              </View>
+            ) : (
+              <Dot status="needsyou" style={{ marginRight: 11 }} />
+            )}
             <View style={{ flex: 1 }}>
               <Text style={styles.rowLabel}>{r.host || r.name}</Text>
-              <Text style={styles.rowSub}>{r.ghUser ? `@${r.ghUser}` : 'unknown'} · {r.paired ? 'approved' : 'awaiting approval'}</Text>
+              <Text style={styles.rowSub}>
+                {r.ghUser ? `@${r.ghUser}` : 'unknown'} · {r.paired ? (r.active ? 'in use' : 'approved') : 'awaiting approval'}
+              </Text>
             </View>
-            {acting === r.id ? <ActivityIndicator size="small" color={C.accent} />
-              : r.paired ? <Pressable onPress={() => revoke(r.id)}><Text style={[styles.action, { color: C.muted }]}>Revoke</Text></Pressable>
-              : <Pressable onPress={() => approve(r.id)}><Text style={[styles.action, { color: C.accent }]}>Approve</Text></Pressable>}
-          </View>
+            {acting === r.id ? (
+              <ActivityIndicator size="small" color={C.accent} />
+            ) : r.paired ? (
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                {r.selected
+                  ? <Text style={[styles.action, { color: C.ready }]}>✓ Using</Text>
+                  : <Pressable onPress={() => selectRunner(r.id)}><Text style={[styles.action, { color: C.accent }]}>Use</Text></Pressable>}
+                <Pressable onPress={() => revoke(r.id)} hitSlop={8}><Text style={[styles.action, { color: C.muted, marginLeft: 16 }]}>Revoke</Text></Pressable>
+              </View>
+            ) : (
+              <Pressable onPress={() => approve(r.id)}><Text style={[styles.action, { color: C.accent }]}>Approve</Text></Pressable>
+            )}
+          </Pressable>
         ))}
+        {approvedCount > 1 && <Text style={styles.hint}>Tap a machine to send your tasks to it.</Text>}
 
         <CapLabel style={styles.head}>Devices</CapLabel>
         <Pressable style={styles.row} onPress={genPairCode} disabled={pairBusy}>
@@ -192,6 +213,9 @@ const styles = StyleSheet.create({
   action: { fontSize: 13, fontWeight: '700' },
   hint: { fontSize: 12, color: C.muted, marginTop: 8, lineHeight: 18 },
   pairCode: { fontSize: 28, fontWeight: '800', color: C.text, letterSpacing: 4, textAlign: 'center' },
+  radio: { width: 18, height: 18, borderRadius: 9, borderWidth: 2, borderColor: C.muted, marginRight: 11, alignItems: 'center', justifyContent: 'center' },
+  radioOn: { borderColor: C.ready },
+  radioDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: C.ready },
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
   sheet: { backgroundColor: C.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 34, borderTopWidth: 1, borderColor: C.border },
   sheetTitle: { fontSize: 16, fontWeight: '700', color: C.text, marginBottom: 12 },
