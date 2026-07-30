@@ -1,13 +1,14 @@
 // Dispatch design tokens — dark theme matching dispatch-mockup.html
 export const C = {
-  canvas: '#0E0F13',
-  surface: '#191B21',
-  surface2: '#23262E',
-  surface3: '#2A2E37',
-  border: '#2E323B',
-  text: '#F4F5F7',
-  text2: '#9CA3AF',
-  muted: '#6B7280',
+  canvas: '#0A0B0F',
+  surface: '#15171D',
+  surface2: '#1E2128',
+  surface3: '#282C35',
+  border: '#262A33',
+  hairline: 'rgba(255,255,255,0.06)',
+  text: '#F5F6F8',
+  text2: '#9AA1AD',
+  muted: '#697078',
   accent: '#3B82F6',
   accentSoft: 'rgba(59,130,246,0.16)',
   // status

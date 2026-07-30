@@ -89,8 +89,9 @@ const styles = StyleSheet.create({
     backgroundColor: C.surface,
     borderWidth: 1,
     borderColor: C.border,
-    borderRadius: 16,
+    borderRadius: 18,
     padding: 16,
+    boxShadow: '0 6px 20px rgba(0,0,0,0.28)',
   },
   btn: {
     height: 50,

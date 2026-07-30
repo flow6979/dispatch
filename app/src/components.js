@@ -200,10 +200,17 @@ const ctx = StyleSheet.create({
 });
 
 const tr = StyleSheet.create({
-  row: { flexDirection: 'row', gap: 12, alignItems: 'flex-start', paddingVertical: 11 },
-  title: { fontSize: 14.5, color: C.text, fontWeight: '500' },
-  sub: { fontSize: 12, color: C.muted, marginTop: 2 },
-  prog: { fontSize: 11.5, color: C.running, fontWeight: '600' },
+  row: {
+    flexDirection: 'row',
+    gap: 12,
+    alignItems: 'flex-start',
+    paddingVertical: 13,
+    borderBottomWidth: 1,
+    borderBottomColor: C.hairline,
+  },
+  title: { fontSize: 15, color: C.text, fontWeight: '600', lineHeight: 20 },
+  sub: { fontSize: 12.5, color: C.muted, marginTop: 3 },
+  prog: { fontSize: 12, color: C.running, fontWeight: '700', marginTop: 2 },
 });
 
 const br = StyleSheet.create({

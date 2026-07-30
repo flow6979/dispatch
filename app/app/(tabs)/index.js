@@ -194,15 +194,16 @@ export default function Capture() {
             { k: 'ask', label: '💬 Ask' },
             { k: 'build', label: '🔨 Build' },
           ].map((m) => (
-            <Pressable
+            <PressableScale
               key={m.k}
               onPress={() => setMode(m.k)}
               style={[styles.modeChip, mode === m.k && styles.modeChipOn]}
+              scaleTo={0.94}
             >
               <Text style={[styles.modeChipTxt, mode === m.k && styles.modeChipTxtOn]}>
                 {m.label}
               </Text>
-            </Pressable>
+            </PressableScale>
           ))}
         </View>
         <Text style={styles.modeHint}>
@@ -289,14 +290,14 @@ const styles = StyleSheet.create({
     borderBottomLeftRadius: 16,
     borderBottomRightRadius: 16,
   },
-  hint: { fontSize: 14, color: C.text2 },
+  hint: { fontSize: 14, color: C.text2, letterSpacing: 0.1 },
   repoHint: { fontSize: 12.5, color: C.needsyou, textAlign: 'center', marginTop: 4 },
   sendError: { fontSize: 12.5, color: C.blocked, textAlign: 'center', marginTop: 4 },
-  modeRow: { flexDirection: 'row', gap: 8, marginTop: 4 },
+  modeRow: { flexDirection: 'row', gap: 8, marginTop: 6 },
   modeChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    borderRadius: 20,
+    paddingHorizontal: 15,
+    paddingVertical: 8,
+    borderRadius: 22,
     backgroundColor: C.surface2,
     borderWidth: 1,
     borderColor: C.border,
@@ -304,30 +305,31 @@ const styles = StyleSheet.create({
   modeChipOn: { backgroundColor: C.accentSoft, borderColor: C.accent },
   modeChipTxt: { fontSize: 13, color: C.text2, fontWeight: '600' },
   modeChipTxtOn: { color: C.accent },
-  modeHint: { fontSize: 11.5, color: C.muted, textAlign: 'center', marginTop: 6 },
+  modeHint: { fontSize: 11.5, color: C.muted, textAlign: 'center', marginTop: 8 },
   inputRow: { flexDirection: 'row', alignItems: 'center', gap: 10, width: '100%' },
   input: {
     flex: 1,
-    height: 52,
+    height: 56,
     backgroundColor: C.surface2,
     borderWidth: 1,
     borderColor: C.border,
-    borderRadius: 14,
-    paddingHorizontal: 16,
+    borderRadius: 18,
+    paddingHorizontal: 18,
     color: C.text,
-    fontSize: 14,
+    fontSize: 15,
     outlineStyle: 'none',
   },
   send: {
-    width: 52,
-    height: 52,
-    borderRadius: 14,
+    width: 56,
+    height: 56,
+    borderRadius: 18,
     backgroundColor: C.accent,
     alignItems: 'center',
     justifyContent: 'center',
+    boxShadow: '0 6px 18px rgba(59,130,246,0.4)',
   },
   sendTxt: { color: '#fff', fontSize: 22, fontWeight: '700' },
-  divider: { height: 1, backgroundColor: C.border },
-  recent: { flex: 1, paddingHorizontal: 20, paddingTop: 12, maxHeight: 240 },
+  divider: { height: 1, backgroundColor: C.hairline },
+  recent: { flex: 1, paddingHorizontal: 20, paddingTop: 12, maxHeight: 260 },
   empty: { color: C.muted, fontSize: 13, paddingVertical: 16 },
 });
