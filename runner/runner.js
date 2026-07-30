@@ -214,7 +214,11 @@ function degreeAndFinish(nodes, edges, extra) {
 }
 
 // --- files: multi-language import edges ---
-function buildFileGraph(srcFiles, fileSet, contents) {
+function buildFileGraph(srcFiles, fileSet, contents, opts = {}) {
+  const goModule = opts.goModule || null;
+  // dir -> source files directly in it (for Go package-path resolution)
+  const dirFiles = {};
+  srcFiles.forEach((f) => { const d = f.split('/').slice(0, -1).join('/'); (dirFiles[d] = dirFiles[d] || []).push(f); });
   const JS_CAND = ['', '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.vue', '/index.js', '/index.ts', '/index.tsx', '/index.jsx'];
   const byBasename = {}; // basename(noext) -> [files]
   srcFiles.forEach((f) => {
@@ -257,6 +261,7 @@ function buildFileGraph(srcFiles, fileSet, contents) {
   }
   const jsRe = /(?:from\s+|\brequire\(\s*|\bimport\(\s*|\bimport\s+)['"]([^'"]+)['"]/g;
   const pyRe = /^\s*(?:from\s+([\w.]+)\s+import|import\s+([\w.]+))/gm;
+  const goRe = /"([^"]+)"/g; // inside Go import ( ... ) blocks
   const genRe = /(?:import|use|require|include)\s+['"]([^'"]+)['"]/g;
   const edgesSet = new Set(); const edges = [];
   const addEdge = (s, t) => { if (t && t !== s && !edgesSet.has(s + ' ' + t)) { edgesSet.add(s + ' ' + t); edges.push({ source: s, target: t }); } };
@@ -264,7 +269,21 @@ function buildFileGraph(srcFiles, fileSet, contents) {
     const c = contents[f]; if (!c) continue;
     const ext = (f.split('.').pop() || '').toLowerCase();
     const lang = ['js', 'jsx', 'ts', 'tsx', 'mjs', 'cjs', 'vue'].includes(ext) ? 'js'
-      : ext === 'py' ? 'py' : 'gen';
+      : ext === 'py' ? 'py' : ext === 'go' ? 'go' : 'gen';
+    if (lang === 'go' && goModule) {
+      // Go imports are package paths; strip the module prefix → repo dir, and
+      // link this file to the files in that package (capped).
+      const block = (c.match(/import\s*\(([\s\S]*?)\)/) || [, ''])[1] + '\n' + (c.match(/^\s*import\s+"[^"]+"/gm) || []).join('\n');
+      goRe.lastIndex = 0; let g; let gn = 0;
+      while ((g = goRe.exec(block)) && gn < 60) {
+        gn++;
+        const spec = g[1];
+        if (!spec.startsWith(goModule + '/')) continue;
+        const targetDir = spec.slice(goModule.length + 1);
+        (dirFiles[targetDir] || []).slice(0, 6).forEach((tf) => addEdge(f, tf));
+      }
+      continue;
+    }
     let m; let n = 0;
     const re = lang === 'js' ? jsRe : lang === 'py' ? pyRe : genRe;
     re.lastIndex = 0;
@@ -371,10 +390,11 @@ function buildEntityGraph(srcFiles, contents) {
 
 // --- apiflow: routes -> entities they likely touch (best-effort) ---
 const ROUTE_RE = [
-  /\b(?:app|router|api|fastify)\.(get|post|put|patch|delete|use)\(\s*['"`]([^'"`]+)/gi, // express/fastify
-  /@(?:app|router|blueprint)\.(get|post|put|patch|delete|route)\(\s*['"]([^'"]+)/gi,     // flask/fastapi
-  /@(Get|Post|Put|Patch|Delete)Mapping\(\s*["']?([^"')]*)/g,                              // spring
-  /\b(get|post|put|patch|delete)\s+['"]([^'"]+)['"]\s*(?:=>|,|do)/gi,                     // rails-ish
+  /\b(?:app|router|api|fastify|r|e|g|mux)\.(get|post|put|patch|delete|use)\(\s*['"`]([^'"`]+)/gi, // express/fastify/gin/echo/chi (lowercase)
+  /\b(?:r|e|g|router|mux)\.(GET|POST|PUT|PATCH|DELETE|Handle|HandleFunc)\(\s*['"`]([^'"`]+)/g,     // gin/echo/chi/mux (Go)
+  /@(?:app|router|blueprint)\.(get|post|put|patch|delete|route)\(\s*['"]([^'"]+)/gi,               // flask/fastapi
+  /@(Get|Post|Put|Patch|Delete|Request)Mapping\(\s*(?:value\s*=\s*)?["']?([^"')]*)/g,               // spring
+  /\b(get|post|put|patch|delete)\s+['"]([^'"]+)['"]\s*(?:=>|,|do)/gi,                               // rails-ish
 ];
 function buildApiFlowGraph(srcFiles, contents, entityGraph) {
   const entityNames = new Set(entityGraph.nodes.map((n) => n.id));
@@ -419,7 +439,9 @@ function buildRepoGraphs(dir) {
   const srcFiles = files.filter(isSrc).slice(0, 800);
   const contents = {};
   for (const f of srcFiles) { try { contents[f] = fs.readFileSync(path.join(dir, f), 'utf8').slice(0, 200000); } catch (_) {} }
-  const filesG = buildFileGraph(srcFiles, fileSet, contents);
+  let goModule = null;
+  try { goModule = ((fs.readFileSync(path.join(dir, 'go.mod'), 'utf8').match(/^module\s+(\S+)/m) || [])[1]) || null; } catch (_) {}
+  const filesG = buildFileGraph(srcFiles, fileSet, contents, { goModule });
   const modulesG = buildModuleGraph(filesG, srcFiles);
   const entitiesG = buildEntityGraph(srcFiles, contents);
   const apiflowG = buildApiFlowGraph(srcFiles, contents, entitiesG);
