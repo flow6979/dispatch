@@ -59,6 +59,23 @@ export function usePulse(active) {
   return p;
 }
 
+// An always-on slow breathing value (0..1) for idle "alive" glows — subtler and
+// slower than usePulse. Map to a faint opacity/scale on a ring behind an element.
+export function useBreathe(duration = 2200) {
+  const p = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(p, { toValue: 1, duration, useNativeDriver: true, easing: Easing.inOut(Easing.ease) }),
+        Animated.timing(p, { toValue: 0, duration, useNativeDriver: true, easing: Easing.inOut(Easing.ease) }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [p, duration]);
+  return p;
+}
+
 // Animate a numeric value smoothly toward `value`; returns the rounded display
 // number. Used for the token/$ counter climbing.
 export function useCountUp(value, duration = 600) {

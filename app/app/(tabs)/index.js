@@ -14,7 +14,7 @@ import {
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
-import { PressableScale, FadeIn, usePulse } from '../../src/anim';
+import { PressableScale, FadeIn, usePulse, useBreathe } from '../../src/anim';
 
 // On-device speech-to-text (free, no API key). Loaded defensively so the app
 // still runs if the native module isn't available (e.g. web, or a device with
@@ -46,6 +46,7 @@ export default function Capture() {
   const [voiceErr, setVoiceErr] = useState(null);
   const [mode, setMode] = useState('auto'); // auto | ask | build
   const pulse = usePulse(listening);
+  const breathe = useBreathe();
   const baseTextRef = useRef('');
 
   const recent = tasks.slice(0, 5);
@@ -144,11 +145,17 @@ export default function Capture() {
             pointerEvents="none"
             style={[
               styles.micRing,
-              {
-                opacity: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.35, 0] }),
-                transform: [{ scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.7] }) }],
-                backgroundColor: listening ? C.needsyou : C.accent,
-              },
+              listening
+                ? {
+                    opacity: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.35, 0] }),
+                    transform: [{ scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.7] }) }],
+                    backgroundColor: C.needsyou,
+                  }
+                : {
+                    opacity: breathe.interpolate({ inputRange: [0, 1], outputRange: [0.1, 0.24] }),
+                    transform: [{ scale: breathe.interpolate({ inputRange: [0, 1], outputRange: [1.04, 1.24] }) }],
+                    backgroundColor: C.accent,
+                  },
             ]}
           />
           <PressableScale onPress={toggleVoice} scaleTo={0.92}>
@@ -200,21 +207,23 @@ export default function Capture() {
         </View>
         <View style={styles.modeRow}>
           {[
-            { k: 'auto', label: 'Auto' },
-            { k: 'ask', label: '💬 Ask' },
-            { k: 'build', label: '🔨 Build' },
-          ].map((m) => (
-            <PressableScale
-              key={m.k}
-              onPress={() => setMode(m.k)}
-              style={[styles.modeChip, mode === m.k && styles.modeChipOn]}
-              scaleTo={0.94}
-            >
-              <Text style={[styles.modeChipTxt, mode === m.k && styles.modeChipTxtOn]}>
-                {m.label}
-              </Text>
-            </PressableScale>
-          ))}
+            { k: 'auto', label: 'Auto', icon: 'zap' },
+            { k: 'ask', label: 'Ask', icon: 'message-square' },
+            { k: 'build', label: 'Build', icon: 'git-pull-request' },
+          ].map((m) => {
+            const on = mode === m.k;
+            return (
+              <PressableScale
+                key={m.k}
+                onPress={() => setMode(m.k)}
+                style={[styles.modeChip, on && styles.modeChipOn]}
+                scaleTo={0.93}
+              >
+                <Feather name={m.icon} size={14} color={on ? C.accent : C.muted} />
+                <Text style={[styles.modeChipTxt, on && styles.modeChipTxtOn]}>{m.label}</Text>
+              </PressableScale>
+            );
+          })}
         </View>
         <Text style={styles.modeHint}>
           {mode === 'auto'
@@ -305,8 +314,11 @@ const styles = StyleSheet.create({
   sendError: { fontSize: 12.5, color: C.blocked, textAlign: 'center', marginTop: 4 },
   modeRow: { flexDirection: 'row', gap: 8, marginTop: 6 },
   modeChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
     paddingHorizontal: 15,
-    paddingVertical: 8,
+    paddingVertical: 9,
     borderRadius: 22,
     backgroundColor: C.surface2,
     borderWidth: 1,

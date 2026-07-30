@@ -254,8 +254,8 @@ export default function Digest() {
                   {m.chat > 0 && <View style={{ flex: m.chat, backgroundColor: C.needsyou }} />}
                 </View>
                 <View style={styles.legendWrap}>
-                  <View style={styles.legendItem}><View style={[styles.legendDot, { backgroundColor: C.accent }]} /><Text style={styles.legendItemTxt}>🔨 Build {m.build}</Text></View>
-                  <View style={styles.legendItem}><View style={[styles.legendDot, { backgroundColor: C.needsyou }]} /><Text style={styles.legendItemTxt}>💬 Ask {m.chat}</Text></View>
+                  <View style={styles.legendItem}><Feather name="git-pull-request" size={12} color={C.accent} /><Text style={styles.legendItemTxt}>Build {m.build}</Text></View>
+                  <View style={styles.legendItem}><Feather name="message-square" size={12} color={C.needsyou} /><Text style={styles.legendItemTxt}>Ask {m.chat}</Text></View>
                 </View>
               </View>
             </Section>

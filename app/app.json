@@ -2,7 +2,7 @@
   "expo": {
     "name": "Dispatch",
     "slug": "dispatch",
-    "version": "1.0.18",
+    "version": "1.0.19",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "dispatch",
@@ -14,7 +14,7 @@
     },
     "android": {
       "package": "com.flow6979.dispatch",
-      "versionCode": 19,
+      "versionCode": 20,
       "permissions": [
         "INTERNET",
         "ACCESS_NETWORK_STATE"

@@ -31,28 +31,32 @@ export function StatusBarFaux() {
 
 export function ContextBar({ context, offline }) {
   const repo = context?.repo || 'No repo selected';
+  const hasRepo = !!context?.repo;
   const branch = context?.workBranch || context?.baseBranch || 'no branch';
+  const shortRepo = repo.split('/').pop();
   return (
     <View style={ctx.wrap}>
-      <View style={ctx.repoRow}>
-        <Feather name="github" size={15} color={C.text2} style={{ marginRight: 8 }} />
-        <Text style={ctx.repo} numberOfLines={1}>
-          {repo}
-        </Text>
-        <Pressable onPress={() => router.push('/repo-picker')} style={ctx.switchBtn} hitSlop={8}>
-          <Text style={ctx.switch}>switch</Text>
-        </Pressable>
+      <View style={ctx.iconBox}>
+        <Feather name="github" size={17} color={hasRepo ? C.text : C.muted} />
       </View>
-      <View style={ctx.branchRow}>
-        <Pressable onPress={() => router.push('/branch-picker')} style={ctx.branchBtn} hitSlop={6}>
-          <Feather name="git-branch" size={12} color={C.text2} style={{ marginRight: 5 }} />
-          <Text style={ctx.branch}>{branch}</Text>
-        </Pressable>
-        <View style={ctx.pill}>
-          <Feather name="shield" size={10} color={C.ready} style={{ marginRight: 4 }} />
-          <Text style={ctx.pillTxt}>DRAFT ONLY</Text>
+      <View style={{ flex: 1, marginLeft: 12 }}>
+        <Text style={[ctx.repo, !hasRepo && { color: C.text2 }]} numberOfLines={1}>
+          {hasRepo ? shortRepo : 'No repo selected'}
+        </Text>
+        <View style={ctx.metaRow}>
+          <Pressable onPress={() => router.push('/branch-picker')} style={ctx.branchBtn} hitSlop={6}>
+            <Feather name="git-branch" size={11} color={C.text2} style={{ marginRight: 4 }} />
+            <Text style={ctx.branch} numberOfLines={1}>{branch}</Text>
+          </Pressable>
+          <View style={ctx.dot} />
+          <Feather name="shield" size={10} color={C.ready} style={{ marginRight: 3 }} />
+          <Text style={ctx.draft}>Draft only</Text>
         </View>
       </View>
+      <PressableScale onPress={() => router.push('/repo-picker')} style={ctx.changeBtn} scaleTo={0.93}>
+        <Feather name="repeat" size={12} color={C.accent} style={{ marginRight: 5 }} />
+        <Text style={ctx.change}>{hasRepo ? 'Change' : 'Select'}</Text>
+      </PressableScale>
     </View>
   );
 }
@@ -183,6 +187,8 @@ const sb = StyleSheet.create({
 
 const ctx = StyleSheet.create({
   wrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 20,
     paddingTop: 14,
     paddingBottom: 15,
@@ -190,22 +196,31 @@ const ctx = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: C.hairline,
   },
-  repoRow: { flexDirection: 'row', alignItems: 'center' },
-  repo: { flex: 1, fontSize: 16, fontWeight: '700', color: C.text, letterSpacing: -0.2 },
-  switchBtn: { backgroundColor: C.accentSoft, paddingHorizontal: 12, paddingVertical: 5, borderRadius: 12 },
-  switch: { fontSize: 12, color: C.accent, fontWeight: '700' },
-  branchRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 },
-  branchBtn: { flexDirection: 'row', alignItems: 'center' },
+  iconBox: {
+    width: 40,
+    height: 40,
+    borderRadius: 13,
+    backgroundColor: C.surface2,
+    borderWidth: 1,
+    borderColor: C.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  repo: { fontSize: 16, fontWeight: '700', color: C.text, letterSpacing: -0.2 },
+  metaRow: { flexDirection: 'row', alignItems: 'center', marginTop: 3 },
+  branchBtn: { flexDirection: 'row', alignItems: 'center', maxWidth: 150 },
   branch: { fontSize: 12.5, color: C.text2 },
-  pill: {
+  dot: { width: 3, height: 3, borderRadius: 2, backgroundColor: C.muted, marginHorizontal: 8 },
+  draft: { fontSize: 12, color: C.muted, fontWeight: '500' },
+  changeBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(48,209,88,0.14)',
-    paddingHorizontal: 9,
-    paddingVertical: 3,
-    borderRadius: 20,
+    backgroundColor: C.accentSoft,
+    paddingHorizontal: 13,
+    paddingVertical: 8,
+    borderRadius: 13,
   },
-  pillTxt: { fontSize: 10, fontWeight: '800', color: C.ready, letterSpacing: 0.4 },
+  change: { fontSize: 12.5, color: C.accent, fontWeight: '700' },
 });
 
 const tr = StyleSheet.create({
