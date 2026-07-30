@@ -1,34 +1,49 @@
-# Dispatch — MVP
+# Dispatch
 
-Voice/text remote for an async coding agent. Capture a task from the phone → the laptop runner builds it in a branch, runs tests, opens a **draft PR** → review at a screen.
+**Code from your phone.** Capture a task by voice or text on your phone → an AI
+agent (Claude Code) on *your* computer clones the repo, makes the change, runs
+tests, and opens a **draft PR** → review it from your phone. You watch it work
+live, with real per-task token/$ cost.
 
-**This machine has no mobile emulator**, so the app is run/verified on **Expo Web**. Native (iOS/Android) is ready for when Xcode / Android Studio are installed.
+> Runs on **your** machine with **your** Claude subscription and GitHub — no
+> second cloud bill, and your code/credentials never leave machines you control.
+
+## 📱 Get started
+1. **Install the app:** grab `app-release.apk` from the [latest release](https://github.com/flow6979/dispatch/releases/latest) (Android).
+2. **Run the runner** on your computer and **approve** it in the app.
+3. Pick a repo, capture a task, watch it open a PR.
+
+👉 Full walkthrough: **[docs/CONNECTING.md](docs/CONNECTING.md)** — installing, connecting one or **multiple computers** and choosing which runs your tasks, adding devices, GitHub accounts, settings, and security.
 
 ## Components
-- `backend/` — Fastify + WebSocket orchestrator (:4000), JSON-file store. Owns the task state machine.
-- `runner/` — laptop daemon. Drives the authenticated `claude` CLI headless + git + `gh` to open draft PRs. **Stub mode is the default** (safe: touches no real repos).
-- `app/` — Expo (React Native) phone app; runs on web for now.
-- `PROTOCOL.md` — the binding contract between the three.
+- **`app/`** — Expo / React Native Android app. Capture (voice + text), live progress, per-task tokens + $, the **Repo Map** tab, and Settings.
+- **`backend/`** — Fastify + WebSocket orchestrator on Render. Task state machine, per-device auth, state mirror. No AI, no repo access.
+- **`runner/`** — the daemon on your computer. The only piece with your `claude` + `gh` auth; it clones, runs Claude Code, tests, and opens draft PRs. Streams every action back to the phone.
+- **`PROTOCOL.md`** — the contract between the three.
 
-## Run it (3 terminals)
+## Features
+- **Voice or text capture** with **intent detection** — a question is answered (chat); a change request opens a PR.
+- **Live action feed** — watch Claude read/edit/run commands in real time; see the exact **tokens + $** per task.
+- **Cost controls** — per-task `$` budget cap, model routing (cheap models for cheap steps), and prompt caching (repeat tasks on a repo cost ~half).
+- **Repo Map** — zoomable graphs of a repo: files, modules, data entities, and API→DB flow (static analysis, 0 tokens; JS/TS, Python, Go, Java, Kotlin, …).
+- **Multiple computers** — connect several PCs and pick which one runs your tasks; automatic failover.
+- **Per-device pairing** + revocable tokens; **GitHub account** switch/disconnect from the phone.
+- **Draft PRs only** — never merges, never touches protected/default branches; hard `$` budget so nothing runs away.
+
+## Run the stack yourself
 ```bash
-# 1. backend
-cd backend && npm install && npm start          # http://localhost:4000
+# backend
+cd backend && npm install && npm start                 # http://localhost:4000
 
-# 2. runner (STUB mode = safe default; no real git/PRs)
-cd runner && npm install && DISPATCH_STUB=1 npm start
-
-# 3. app (web)
-cd app && npm install && npx expo start --web    # opens in browser
+# runner (STUB mode = safe; no real git/PRs). Use DISPATCH_STUB=0 for real PRs.
+cd runner && npm install && \
+  DISPATCH_BACKEND=http://localhost:4000 DISPATCH_STUB=1 npm start
 ```
+Build the Android APK locally (JDK 17): `bash app/build-apk.sh`.
 
-## Test the end-to-end loop (stub, no real repos)
-```bash
-bash test/integration.sh
-```
-Creates a task and asserts it flows CAPTURED → SPEC_DRAFTED → SPEC_CONFIRMED → RUNNING → TESTS → PR_OPEN with a (fake) PR URL.
-
-## Going live (real PRs) — opt-in, not default
-Set `DISPATCH_STUB=0` on the runner. It will then clone the target repo under `~/dispatch-workspace`, branch off (never on a protected/default branch), run `claude` headless, run tests, and open a **draft** PR via `gh`. Never merges.
-
-See `STATUS.md` for the current build/test state and open items.
+## Docs
+- **[docs/CONNECTING.md](docs/CONNECTING.md)** — setup & connecting (start here).
+- [DEPLOY.md](DEPLOY.md) — deploy the backend (Render) + build the APK.
+- [PROTOCOL.md](PROTOCOL.md) — phone ↔ backend ↔ runner message contract.
+- [docs/MORNING-REPORT.md](docs/MORNING-REPORT.md) — roadmap, cost math, what's shipped.
+- [docs/research/](docs/research/) — competitive analysis, token-optimization, graph-viz notes.
