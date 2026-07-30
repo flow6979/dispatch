@@ -439,8 +439,9 @@ function handleRunnerMessage(entry, msg) {
       break;
     }
     case 'repo_graph': {
-      if (msg.repo && msg.graph) {
-        repoGraphs.set(msg.repo, { graph: msg.graph, head: msg.head || null, builtAt: now() });
+      if (msg.repo && (msg.graphs || msg.graph)) {
+        const graphs = msg.graphs || { files: msg.graph };
+        repoGraphs.set(msg.repo, { graphs, head: msg.head || null, builtAt: now() });
         repoGraphStatus.set(msg.repo, 'ready');
       }
       break;
@@ -704,10 +705,15 @@ async function build() {
   // otherwise reports status so the app can trigger a build.
   app.get('/api/repo-graph', async (req) => {
     const repo = (req.query && req.query.repo) || '';
+    const type = (req.query && req.query.type) || 'files';
     const entry = repoGraphs.get(repo);
+    const graphs = entry ? entry.graphs : null;
+    const types = graphs ? Object.keys(graphs).filter((k) => graphs[k] && graphs[k].nodes) : [];
     return {
       repo,
-      graph: entry ? entry.graph : null,
+      type,
+      types, // available graph views
+      graph: graphs && graphs[type] ? graphs[type] : null,
       head: entry ? entry.head : null,
       builtAt: entry ? entry.builtAt : null,
       status: repoGraphStatus.get(repo) || (entry ? 'ready' : 'none'),

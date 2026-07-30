@@ -197,66 +197,205 @@ function scopedFilesFor(text, dir, limit = 8) {
   return scored.slice(0, limit).map((x) => x.f);
 }
 
-/**
- * Build a dependency GRAPH of the repo via static analysis (0 tokens):
- * nodes = source files, edges = intra-repo import relationships.
- * Used by the app's "Map" tab to visualize how the repo connects.
- */
-function buildRepoGraph(dir) {
+// ---------------------------------------------------------------------------
+// Repo graphs (static analysis, 0 tokens). buildRepoGraphs() returns several
+// views keyed by type; the app's Map tab lets you switch between them:
+//   files    — file ↔ file import dependencies (multi-language)
+//   modules  — folder ↔ folder architecture (aggregated; robust for any repo)
+//   entities — data models / classes / types and how they reference each other
+//   apiflow  — API routes → the entities/tables they touch (best-effort)
+// ---------------------------------------------------------------------------
+
+function degreeAndFinish(nodes, edges, extra) {
+  const deg = {};
+  edges.forEach((e) => { deg[e.source] = (deg[e.source] || 0) + 1; deg[e.target] = (deg[e.target] || 0) + 1; });
+  nodes.forEach((n) => { n.deg = deg[n.id] || 0; });
+  return { nodes, edges, builtAt: Date.now(), ...(extra || {}) };
+}
+
+// --- files: multi-language import edges ---
+function buildFileGraph(srcFiles, fileSet, contents) {
+  const JS_CAND = ['', '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.vue', '/index.js', '/index.ts', '/index.tsx', '/index.jsx'];
+  const byBasename = {}; // basename(noext) -> [files]
+  srcFiles.forEach((f) => {
+    const b = f.split('/').pop().replace(/\.[^.]+$/, '');
+    (byBasename[b] = byBasename[b] || []).push(f);
+  });
+  function resolveRel(fromFile, spec, cands) {
+    const baseDir = fromFile.split('/').slice(0, -1).join('/');
+    const stack = [];
+    for (const seg of ((baseDir ? baseDir + '/' : '') + spec).split('/')) {
+      if (seg === '.' || seg === '') continue;
+      if (seg === '..') stack.pop(); else stack.push(seg);
+    }
+    const norm = stack.join('/');
+    for (const c of cands) if (fileSet.has(norm + c)) return norm + c;
+    return null;
+  }
+  function resolve(fromFile, spec, lang) {
+    if (!spec) return null;
+    if (lang === 'js') {
+      if (spec.startsWith('.')) return resolveRel(fromFile, spec, JS_CAND);
+      // non-relative (alias/pkg): last segment unique basename match
+      const last = spec.split('/').pop();
+      if (byBasename[last] && byBasename[last].length === 1) return byBasename[last][0];
+      return null;
+    }
+    if (lang === 'py') {
+      const rel = spec.replace(/\./g, '/');
+      const cands = ['.py', '/__init__.py'];
+      if (spec.startsWith('.')) return resolveRel(fromFile, spec.replace(/^\.+/, (m) => '../'.repeat(m.length - 1) || './').replace(/\./g, '/'), cands);
+      for (const c of cands) if (fileSet.has(rel + c)) return rel + c;
+      const last = spec.split('.').pop();
+      if (byBasename[last] && byBasename[last].length === 1) return byBasename[last][0];
+      return null;
+    }
+    // go/ruby/java/etc.: basename match fallback
+    const last = spec.split(/[\/.]/).pop();
+    if (byBasename[last] && byBasename[last].length === 1) return byBasename[last][0];
+    return null;
+  }
+  const jsRe = /(?:from\s+|\brequire\(\s*|\bimport\(\s*|\bimport\s+)['"]([^'"]+)['"]/g;
+  const pyRe = /^\s*(?:from\s+([\w.]+)\s+import|import\s+([\w.]+))/gm;
+  const genRe = /(?:import|use|require|include)\s+['"]([^'"]+)['"]/g;
+  const edgesSet = new Set(); const edges = [];
+  const addEdge = (s, t) => { if (t && t !== s && !edgesSet.has(s + ' ' + t)) { edgesSet.add(s + ' ' + t); edges.push({ source: s, target: t }); } };
+  for (const f of srcFiles) {
+    const c = contents[f]; if (!c) continue;
+    const ext = (f.split('.').pop() || '').toLowerCase();
+    const lang = ['js', 'jsx', 'ts', 'tsx', 'mjs', 'cjs', 'vue'].includes(ext) ? 'js'
+      : ext === 'py' ? 'py' : 'gen';
+    let m; let n = 0;
+    const re = lang === 'js' ? jsRe : lang === 'py' ? pyRe : genRe;
+    re.lastIndex = 0;
+    while ((m = re.exec(c)) && n < 80) { n++; addEdge(f, resolve(f, m[1] || m[2], lang)); }
+  }
+  const connected = new Set(); edges.forEach((e) => { connected.add(e.source); connected.add(e.target); });
+  const nodes = [...srcFiles.filter((f) => connected.has(f)), ...srcFiles.filter((f) => !connected.has(f)).slice(0, 80)]
+    .map((f) => ({ id: f, label: f.split('/').pop(), path: f, group: f.includes('/') ? f.split('/')[0] : '(root)' }));
+  return degreeAndFinish(nodes, edges, { fileCount: srcFiles.length });
+}
+
+// --- modules: aggregate file edges to folder level (always useful) ---
+function moduleOf(f) {
+  const parts = f.split('/');
+  if (parts.length <= 1) return '(root)';
+  return parts.slice(0, Math.min(2, parts.length - 1)).join('/');
+}
+function buildModuleGraph(fileGraph, srcFiles) {
+  const count = {};
+  srcFiles.forEach((f) => { const mo = moduleOf(f); count[mo] = (count[mo] || 0) + 1; });
+  const edgesSet = new Set(); const edges = [];
+  fileGraph.edges.forEach((e) => {
+    const a = moduleOf(e.source); const b = moduleOf(e.target);
+    if (a !== b && !edgesSet.has(a + ' ' + b)) { edgesSet.add(a + ' ' + b); edges.push({ source: a, target: b }); }
+  });
+  const nodes = Object.keys(count).map((mo) => ({ id: mo, label: mo, group: mo.split('/')[0], size: count[mo] }));
+  return degreeAndFinish(nodes, edges);
+}
+
+// --- entities: data models / classes / types + references between them ---
+const ENTITY_RE = [
+  /\b(?:export\s+)?(?:abstract\s+)?class\s+([A-Z][A-Za-z0-9_]+)/g,        // JS/TS/Java/Kotlin/PHP/Ruby
+  /\b(?:export\s+)?interface\s+([A-Z][A-Za-z0-9_]+)/g,                    // TS/Java/Go
+  /\b(?:export\s+)?type\s+([A-Z][A-Za-z0-9_]+)\s*[=<]/g,                   // TS
+  /\b(?:export\s+)?enum\s+([A-Z][A-Za-z0-9_]+)/g,                          // TS/Java
+  /\btype\s+([A-Z][A-Za-z0-9_]+)\s+struct\b/g,                            // Go
+  /\bmodel\s+([A-Z][A-Za-z0-9_]+)\s*\{/g,                                  // Prisma
+  /\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["'`]?([A-Za-z0-9_]+)/gi,   // SQL
+  /\bclass\s+([A-Z][A-Za-z0-9_]+)\s*\(\s*(?:models\.Model|Base|db\.Model)/g, // Django/SQLAlchemy
+];
+function buildEntityGraph(srcFiles, contents) {
+  const entities = {}; // name -> {file, kind}
+  const kindOf = (i) => ['class', 'interface', 'type', 'enum', 'struct', 'model', 'table', 'model'][i] || 'entity';
+  for (const f of srcFiles) {
+    const c = contents[f]; if (!c) continue;
+    ENTITY_RE.forEach((re, i) => {
+      re.lastIndex = 0; let m; let n = 0;
+      while ((m = re.exec(c)) && n < 200) { n++; const name = m[1]; if (name && !entities[name]) entities[name] = { file: f, kind: kindOf(i) }; }
+    });
+  }
+  const names = Object.keys(entities);
+  if (names.length > 400) names.length = 400;
+  const nameSet = new Set(names);
+  const edgesSet = new Set(); const edges = [];
+  // Edge A->B if A's file references B's name (word boundary), A!=B.
+  for (const a of names) {
+    const c = contents[entities[a].file]; if (!c) continue;
+    for (const b of names) {
+      if (a === b) continue;
+      if (new RegExp('\\b' + b.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b').test(c)) {
+        const key = a + ' ' + b;
+        if (!edgesSet.has(key)) { edgesSet.add(key); edges.push({ source: a, target: b }); }
+      }
+    }
+    if (edges.length > 1200) break;
+  }
+  const nodes = names.map((n) => ({ id: n, label: n, group: entities[n].kind, path: entities[n].file }));
+  return degreeAndFinish(nodes, edges, { note: nameSet.size ? undefined : 'no data entities detected' });
+}
+
+// --- apiflow: routes -> entities they likely touch (best-effort) ---
+const ROUTE_RE = [
+  /\b(?:app|router|api|fastify)\.(get|post|put|patch|delete|use)\(\s*['"`]([^'"`]+)/gi, // express/fastify
+  /@(?:app|router|blueprint)\.(get|post|put|patch|delete|route)\(\s*['"]([^'"]+)/gi,     // flask/fastapi
+  /@(Get|Post|Put|Patch|Delete)Mapping\(\s*["']?([^"')]*)/g,                              // spring
+  /\b(get|post|put|patch|delete)\s+['"]([^'"]+)['"]\s*(?:=>|,|do)/gi,                     // rails-ish
+];
+function buildApiFlowGraph(srcFiles, contents, entityGraph) {
+  const entityNames = new Set(entityGraph.nodes.map((n) => n.id));
+  const nodes = []; const edges = []; const seen = new Set();
+  const addNode = (id, label, group) => { if (!seen.has(id)) { seen.add(id); nodes.push({ id, label, group }); } };
+  let routeCount = 0;
+  for (const f of srcFiles) {
+    const c = contents[f]; if (!c) continue;
+    const routesInFile = [];
+    ROUTE_RE.forEach((re) => {
+      re.lastIndex = 0; let m; let n = 0;
+      while ((m = re.exec(c)) && n < 100) {
+        n++;
+        const method = (m[1] || 'route').toUpperCase();
+        const p = (m[2] || '').slice(0, 40) || '/';
+        const id = 'route:' + method + ' ' + p;
+        routesInFile.push(id);
+        addNode(id, method + ' ' + p, 'route');
+        routeCount++;
+      }
+    });
+    if (!routesInFile.length) continue;
+    // entities referenced in this file → connect each route to them
+    for (const name of entityNames) {
+      if (new RegExp('\\b' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b').test(c)) {
+        addNode('entity:' + name, name, 'entity');
+        for (const r of routesInFile) {
+          const key = r + '>' + name;
+          if (!seen.has('e:' + key)) { seen.add('e:' + key); edges.push({ source: r, target: 'entity:' + name }); }
+        }
+      }
+    }
+    if (nodes.length > 400) break;
+  }
+  return degreeAndFinish(nodes, edges, { routeCount, note: routeCount ? undefined : 'no API routes detected' });
+}
+
+function buildRepoGraphs(dir) {
   const files = gitLines(dir, ['ls-files']);
   const fileSet = new Set(files);
   const isSrc = (f) => SRC_EXT.has((f.split('.').pop() || '').toLowerCase());
-  const srcFiles = files.filter(isSrc).slice(0, 600); // cap for very large repos
+  const srcFiles = files.filter(isSrc).slice(0, 800);
+  const contents = {};
+  for (const f of srcFiles) { try { contents[f] = fs.readFileSync(path.join(dir, f), 'utf8').slice(0, 200000); } catch (_) {} }
+  const filesG = buildFileGraph(srcFiles, fileSet, contents);
+  const modulesG = buildModuleGraph(filesG, srcFiles);
+  const entitiesG = buildEntityGraph(srcFiles, contents);
+  const apiflowG = buildApiFlowGraph(srcFiles, contents, entitiesG);
+  filesG.fileCount = files.length;
+  return { files: filesG, modules: modulesG, entities: entitiesG, apiflow: apiflowG, builtAt: Date.now(), fileCount: files.length };
+}
 
-  const JS_CAND = ['', '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '/index.js', '/index.ts', '/index.tsx', '/index.jsx'];
-  function resolveJs(fromFile, spec) {
-    if (!spec.startsWith('.')) return null; // only intra-repo relative imports
-    const baseDir = fromFile.split('/').slice(0, -1).join('/');
-    const parts = (baseDir ? baseDir + '/' : '') + spec;
-    const stack = [];
-    for (const seg of parts.split('/')) {
-      if (seg === '.' || seg === '') continue;
-      if (seg === '..') stack.pop();
-      else stack.push(seg);
-    }
-    const norm = stack.join('/');
-    for (const c of JS_CAND) {
-      if (fileSet.has(norm + c)) return norm + c;
-    }
-    return null;
-  }
-
-  const specRe = /(?:from\s+|\brequire\(\s*|\bimport\(\s*|\bimport\s+)['"]([^'"]+)['"]/g;
-  const edgesSet = new Set();
-  const edges = [];
-  for (const f of srcFiles) {
-    let content;
-    try { content = fs.readFileSync(path.join(dir, f), 'utf8'); } catch (_) { continue; }
-    specRe.lastIndex = 0;
-    let m; let count = 0;
-    while ((m = specRe.exec(content)) && count < 60) {
-      count += 1;
-      const target = resolveJs(f, m[1]);
-      if (target && target !== f) {
-        const key = f + ' ' + target;
-        if (!edgesSet.has(key)) { edgesSet.add(key); edges.push({ source: f, target }); }
-      }
-    }
-  }
-  const connected = new Set();
-  edges.forEach((e) => { connected.add(e.source); connected.add(e.target); });
-  const nodeList = srcFiles.filter((f) => connected.has(f));
-  const singletons = srcFiles.filter((f) => !connected.has(f)).slice(0, 60);
-  const degOf = {};
-  edges.forEach((e) => { degOf[e.source] = (degOf[e.source] || 0) + 1; degOf[e.target] = (degOf[e.target] || 0) + 1; });
-  const nodes = [...nodeList, ...singletons].map((f) => ({
-    id: f,
-    label: f.split('/').pop(),
-    path: f,
-    group: f.includes('/') ? f.split('/')[0] : '(root)',
-    deg: degOf[f] || 0,
-  }));
-  return { nodes, edges, fileCount: files.length, builtAt: Date.now() };
+// Backward-compatible single-graph accessor (the files view).
+function buildRepoGraph(dir) {
+  return buildRepoGraphs(dir).files;
 }
 
 /**
@@ -271,7 +410,8 @@ function ensureRepoIndex(dir, repo, emit, taskId) {
   try { if (fs.existsSync(file)) cached = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (_) {}
   if (cached && cached.head === head && cached.map) {
     emit && emit({ type: 'progress', taskId, message: `🗂️ using cached index for ${repo}` });
-    if (cached.graph) emit && emit({ type: 'repo_graph', repo, head, graph: cached.graph });
+    if (cached.graphs) emit && emit({ type: 'repo_graph', repo, head, graphs: cached.graphs });
+    else if (cached.graph) emit && emit({ type: 'repo_graph', repo, head, graphs: { files: cached.graph } });
     return cached.map;
   }
   const first = !cached;
@@ -283,14 +423,14 @@ function ensureRepoIndex(dir, repo, emit, taskId) {
   });
   const t0 = Date.now();
   const map = buildRepoMap(dir);
-  let graph = null;
-  try { graph = buildRepoGraph(dir); } catch (_) {}
+  let graphs = null;
+  try { graphs = buildRepoGraphs(dir); } catch (_) {}
   try {
     fs.mkdirSync(INDEX_DIR, { recursive: true });
-    fs.writeFileSync(file, JSON.stringify({ repo, head, builtAt: Date.now(), map, graph }));
+    fs.writeFileSync(file, JSON.stringify({ repo, head, builtAt: Date.now(), map, graphs }));
   } catch (_) {}
-  if (graph) emit && emit({ type: 'repo_graph', repo, head, graph });
-  log(`indexed ${repo} in ${Date.now() - t0}ms (map ${map.length} chars, graph ${graph ? graph.nodes.length : 0} nodes)`);
+  if (graphs) emit && emit({ type: 'repo_graph', repo, head, graphs });
+  log(`indexed ${repo} in ${Date.now() - t0}ms (map ${map.length} chars, files ${graphs ? graphs.files.nodes.length : 0} nodes)`);
   return map;
 }
 
@@ -1038,9 +1178,9 @@ async function handleBuildGraph(msg, emit) {
     }
     emit({ type: 'graph_status', repo, status: 'building' });
     const head = (gitLines(repoDir, ['rev-parse', 'HEAD'])[0]) || null;
-    const graph = buildRepoGraph(repoDir);
-    emit({ type: 'repo_graph', repo, head, graph });
-    log(`built graph for ${repo}: ${graph.nodes.length} nodes / ${graph.edges.length} edges`);
+    const graphs = buildRepoGraphs(repoDir);
+    emit({ type: 'repo_graph', repo, head, graphs });
+    log(`built graphs for ${repo}: files ${graphs.files.nodes.length}n, modules ${graphs.modules.nodes.length}n, entities ${graphs.entities.nodes.length}n, apiflow ${graphs.apiflow.nodes.length}n`);
   } catch (err) {
     emit({ type: 'graph_status', repo, status: 'error', message: err.message });
     log('build_graph failed:', err.message);
@@ -1354,6 +1494,7 @@ module.exports = {
   handleChat,
   buildRepoMap,
   buildRepoGraph,
+  buildRepoGraphs,
   scopedFilesFor,
   ensureRepoIndex,
   runClaudeStream,
