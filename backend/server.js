@@ -49,6 +49,8 @@ let store = {
   settings: { digestTime: '07:30', autonomy: 'auto', taskBudgetUsd: 3, push: true, quietHours: true },
   // which approved runner (PC) tasks are dispatched to
   selectedRunnerId: null,
+  // phone push tokens: token -> { platform, createdAt } (for FCM/Expo push)
+  pushTokens: {},
 };
 
 const DEFAULT_SETTINGS = { digestTime: '07:30', autonomy: 'auto', taskBudgetUsd: 3, push: true, quietHours: true };
@@ -235,6 +237,47 @@ function touchTask(task) {
   task.updatedAt = now();
   saveStore();
   broadcastTasksUpdate();
+}
+
+// --- Push notifications (dormant until a Firebase FCM key is configured) -----
+const FCM_SERVER_KEY = process.env.DISPATCH_FCM_SERVER_KEY || '';
+let _fcmWarned = false;
+
+// Notify all registered phones. No-op (one-time log) until DISPATCH_FCM_SERVER_KEY
+// is set — safe to call from state transitions today; lights up when push is set up.
+async function notifyDevices(title, body, data = {}) {
+  if (store.settings && store.settings.push === false) return;
+  const tokens = Object.keys(store.pushTokens || {});
+  if (!tokens.length) return;
+  if (!FCM_SERVER_KEY) {
+    if (!_fcmWarned) { console.log('[push] notification suppressed — DISPATCH_FCM_SERVER_KEY not set'); _fcmWarned = true; }
+    return;
+  }
+  try {
+    const res = await fetch('https://fcm.googleapis.com/fcm/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `key=${FCM_SERVER_KEY}` },
+      body: JSON.stringify({ registration_ids: tokens, priority: 'high', notification: { title, body }, data }),
+    });
+    if (!res.ok) console.warn('[push] FCM responded', res.status);
+  } catch (err) {
+    console.warn('[push] send failed:', err.message);
+  }
+}
+
+// Only the moments worth interrupting for.
+function notifyForTask(task, prevState) {
+  if (!task || task.state === prevState) return;
+  const short = (task.promptText || 'Task').slice(0, 48);
+  const m = {
+    SPEC_DRAFTED: ['Needs your OK', short],
+    PR_OPEN: ['PR ready to review', short],
+    ANSWERED: ['Answer ready', short],
+    MERGED: ['Merged ✓', short],
+    BLOCKED: ['Task needs a hand', short],
+    FAILED: ['Task needs a hand', short],
+  }[task.state];
+  if (m) notifyDevices(m[0], m[1], { taskId: task.id });
 }
 
 // ---------------------------------------------------------------------------
@@ -529,6 +572,7 @@ function handleRunnerMessage(entry, msg) {
       // Autonomy: 'auto' proceeds after the timer; 'draft' waits for the user
       // to confirm from the phone.
       if (!store.settings || store.settings.autonomy !== 'review') scheduleAutoProceed(task);
+      else notifyForTask(task, 'CAPTURED'); // only interrupt when it truly needs the user
       break;
     }
     case 'progress': {
@@ -555,6 +599,7 @@ function handleRunnerMessage(entry, msg) {
         console.warn('[runner] result for unknown task:', msg.taskId);
         break;
       }
+      const prevState = task.state;
       task.state = msg.state || 'FAILED';
       if (msg.prUrl !== undefined) task.prUrl = msg.prUrl;
       if (msg.summary !== undefined) task.summary = msg.summary;
@@ -576,6 +621,7 @@ function handleRunnerMessage(entry, msg) {
         pct: 100,
       });
       touchTask(task);
+      notifyForTask(task, prevState);
       break;
     }
     default:
@@ -858,6 +904,16 @@ async function build() {
 
   app.get('/api/tasks', async () => {
     return { tasks: tasksNewestFirst() };
+  });
+
+  // Register this phone's push token (FCM/Expo) so the backend can notify it.
+  app.post('/api/push/register', async (req, reply) => {
+    const token = req.body && req.body.token;
+    if (!token) { reply.code(400); return { error: 'no_token' }; }
+    store.pushTokens = store.pushTokens || {};
+    store.pushTokens[token] = { platform: (req.body && req.body.platform) || 'android', createdAt: now() };
+    saveStore();
+    return { ok: true };
   });
 
   // Open issues for a repo — served from the runner's gh, cached, refreshed on

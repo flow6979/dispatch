@@ -55,6 +55,27 @@ so it works behind any firewall/NAT.
 - `DISPATCH_STUB=1` (default) — **safe**: simulates a task and returns a fake PR. Touches no repos. Use to try the flow.
 - `DISPATCH_STUB=0` — **real**: clones the repo, runs Claude to make changes, runs tests, and opens a **draft PR** (never merges, never pushes to a default/protected branch).
 
+### Keep the runner always on (recommended)
+
+Tasks only run while the runner is up. Install it as a background service so it
+starts at login and restarts on crash/reboot:
+
+```bash
+# set your DISPATCH_* vars first (they get baked into the service), e.g.:
+export DISPATCH_BACKEND=https://dispatch-backend-syxb.onrender.com
+export DISPATCH_STUB=0
+export RUNNER_NAME="My Laptop"
+
+bash runner/install-macos-service.sh     # macOS (LaunchAgent)
+```
+
+- Logs: `tail -f ~/.dispatch/runner.log`
+- Change a `DISPATCH_*` var later? Re-export it and re-run the install script.
+- Remove: `bash runner/uninstall-macos-service.sh`
+
+The installer captures your current `PATH` and `DISPATCH_*` variables so the
+daemon sees the same `claude`/`gh`/`git` and settings you use interactively.
+
 ---
 
 ## 3. Connect multiple computers & pick which one runs tasks
@@ -161,6 +182,8 @@ restores it on reconnect, so tasks/approvals survive redeploys.
 | `DISPATCH_SECRET` | `dev-token` | Shared secret; set a real one to lock things down (§7). |
 | `DISPATCH_BUDGET_USD` | `3` | Default max `$` per task. |
 | `DISPATCH_EDIT_MODEL` | `sonnet` | Model for the code edit (`opus` for hard tasks). |
+| `DISPATCH_REVIEW_MODEL` | `sonnet` | Model for the adversarial self-review. |
+| `DISPATCH_SELF_REVIEW` | `1` (on) | `0` disables the AI self-review pass (static risk signals stay). |
 | `DISPATCH_CLASSIFY_MODEL` / `DISPATCH_SPEC_MODEL` | `haiku` | Cheap models for intent/spec. |
 | `DISPATCH_CHAT_MODEL` | `sonnet` | Model for chat answers. |
 | `DISPATCH_MAX_TURNS` | `40` | Hard ceiling on the agent loop per task. |
@@ -168,6 +191,28 @@ restores it on reconnect, so tasks/approvals survive redeploys.
 
 The runner also keeps a durable state mirror and its per-device token under
 `~/.dispatch/`, and per-repo indexes under `~/.dispatch/repo-index/`.
+
+---
+
+## 10. Push notifications (optional)
+
+Dispatch can push a notification when a task **needs your OK**, a **PR is ready
+to review**, an **answer** lands, something is **blocked**, or a PR is **merged**.
+The backend side is built in; it stays dormant until you add Firebase.
+
+To turn it on:
+
+1. Create a Firebase project → add an Android app with package
+   `com.flow6979.dispatch` → download **`google-services.json`**.
+2. Get the **Cloud Messaging server key** (Firebase → Project settings → Cloud
+   Messaging).
+3. Set it on the backend: `DISPATCH_FCM_SERVER_KEY=<server key>` (Render → the
+   backend service → Environment).
+4. Drop `google-services.json` into the app and rebuild (the phone then
+   registers its token via `POST /api/push/register`).
+
+Until step 3–4 are done, notifications are silently skipped (no errors). Toggle
+them per-account with **Settings → Push**.
 
 ## Troubleshooting
 
