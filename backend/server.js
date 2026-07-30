@@ -214,8 +214,21 @@ function newTask({ promptText, repo, baseBranch, workBranch, mode }) {
   };
 }
 
+// The unified diff can be large (up to ~120KB). Keep it out of the list/WS
+// payloads (the phone polls the list every 2s) — it's served only by the
+// per-task detail endpoint. A lightweight `hasDiff` flag stays for the UI.
+function stripHeavy(t) {
+  if (t && t.diff) {
+    const { diff, ...rest } = t;
+    return { ...rest, hasDiff: true };
+  }
+  return t;
+}
+
 function tasksNewestFirst() {
-  return Object.values(store.tasks).sort((a, b) => b.createdAt - a.createdAt);
+  return Object.values(store.tasks)
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .map(stripHeavy);
 }
 
 function touchTask(task) {
@@ -544,6 +557,12 @@ function handleRunnerMessage(entry, msg) {
       if (msg.resolvedKind !== undefined) task.resolvedKind = msg.resolvedKind;
       if (typeof msg.tokensUsed === 'number') task.tokensUsed = msg.tokensUsed;
       if (typeof msg.costUsd === 'number') task.costUsd = msg.costUsd;
+      // Review payload: the PR diff, per-file stats, and test/check results so
+      // the change can be reviewed from the phone.
+      if (msg.diff !== undefined) task.diff = msg.diff;
+      if (msg.files !== undefined) task.files = msg.files;
+      if (msg.diffTruncated !== undefined) task.diffTruncated = msg.diffTruncated;
+      if (msg.checks !== undefined) task.checks = msg.checks;
       task.progress.push({
         ts: now(),
         state: task.state,

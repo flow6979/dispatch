@@ -1182,6 +1182,9 @@ async function runTaskReal(task, emit) {
       return fail('FAILED', 'gh CLI not found; pushed branch but could not open a draft PR.');
     }
 
+    // Capture the change for phone review: unified diff + per-file line stats.
+    const changes = await captureChanges(worktreeDir, baseBranch || defaultBranch || 'main');
+
     // (g) Terminal success.
     emit({
       type: 'result',
@@ -1190,6 +1193,17 @@ async function runTaskReal(task, emit) {
       prUrl,
       tokensUsed,
       costUsd,
+      diff: changes.diff,
+      files: changes.files,
+      diffTruncated: changes.truncated,
+      checks: {
+        tests: {
+          ran: testResult.ran,
+          passed: testResult.passed,
+          command: testResult.command,
+          message: testResult.message,
+        },
+      },
       summary: confidenceSummary(
         spec,
         `Draft PR opened at ${prUrl}. Tests: ${testResult.ran ? (testResult.passed ? 'passed' : 'failed') : 'none detected'}. Used ~${tokensUsed.toLocaleString()} tokens.`,
@@ -1199,6 +1213,41 @@ async function runTaskReal(task, emit) {
     // Absolute backstop: never end without a terminal result.
     fail('FAILED', `Unexpected error: ${err && err.message ? err.message : String(err)}`);
   }
+}
+
+/**
+ * Capture the change set for phone review: a unified diff plus per-file line
+ * stats. We make exactly one commit per task, so `HEAD~1..HEAD` is a reliable
+ * fallback; prefer a three-dot diff against the base branch when it resolves.
+ * The diff is capped so it stays cheap to send and store.
+ */
+async function captureChanges(dir, base) {
+  const DIFF_CAP = 120000; // ~120KB
+  const out = { diff: '', files: [], truncated: false };
+  const ranges = [`${base}...HEAD`, `origin/${base}...HEAD`, 'HEAD~1..HEAD'];
+  for (const range of ranges) {
+    try {
+      const numstat = await run('git', ['diff', '--numstat', range], { cwd: dir, timeoutMs: 30000 });
+      const files = numstat
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map((l) => {
+          const parts = l.split('\t');
+          const add = parts[0], del = parts[1], p = parts.slice(2).join('\t');
+          return { path: p, add: add === '-' ? 0 : Number(add) || 0, del: del === '-' ? 0 : Number(del) || 0, binary: add === '-' };
+        });
+      if (!files.length) continue; // this range produced nothing — try next
+      let diff = await run('git', ['diff', range], { cwd: dir, timeoutMs: 45000 });
+      if (diff.length > DIFF_CAP) { diff = diff.slice(0, DIFF_CAP); out.truncated = true; }
+      out.files = files;
+      out.diff = diff;
+      break;
+    } catch (_) {
+      // range didn't resolve (e.g. base ref missing) — try the next one
+    }
+  }
+  return out;
 }
 
 /** Detect a test command from the worktree and run it. */

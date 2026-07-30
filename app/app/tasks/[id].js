@@ -6,7 +6,16 @@ import { StatusBarFaux, BackRow, openUrl, prNumber } from '../../src/components'
 import { CapLabel, Card, Button, Dot, OfflineBanner } from '../../src/ui';
 import { usePoll } from '../../src/hooks';
 import { Markdown } from '../../src/markdown';
+import { DiffView, ChecksRow } from '../../src/diff';
 import { api } from '../../src/api';
+
+function filesSummary(task) {
+  const files = Array.isArray(task.files) ? task.files : [];
+  if (!files.length) return null;
+  const add = files.reduce((n, f) => n + (f.add || 0), 0);
+  const del = files.reduce((n, f) => n + (f.del || 0), 0);
+  return `${files.length} file${files.length === 1 ? '' : 's'} · +${add} −${del}`;
+}
 
 export default function TaskDetail() {
   const { id } = useLocalSearchParams();
@@ -92,6 +101,17 @@ export default function TaskDetail() {
                 <Text style={styles.summary}>{spec.goal}</Text>
               </View>
             ) : null}
+
+            {(task.checks || (Array.isArray(task.files) && task.files.length > 0) || task.diff) && (
+              <View>
+                <View style={styles.changesHead}>
+                  <CapLabel>Changes</CapLabel>
+                  {filesSummary(task) ? <Text style={styles.changesSummary}>{filesSummary(task)}</Text> : null}
+                </View>
+                <ChecksRow checks={task.checks} />
+                <DiffView diff={task.diff} truncated={task.diffTruncated} />
+              </View>
+            )}
 
             {progress.length > 0 && (
               <View>
@@ -185,6 +205,8 @@ const styles = StyleSheet.create({
   tokenSub: { fontSize: 12, color: C.muted, marginTop: -8 },
   summary: { fontSize: 13.5, color: C.text2, lineHeight: 21 },
   answerTxt: { fontSize: 14, color: C.text, lineHeight: 22 },
+  changesHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
+  changesSummary: { fontSize: 12, color: C.text2, fontWeight: '600' },
   progRow: { flexDirection: 'row', gap: 8, alignItems: 'flex-start', paddingVertical: 2 },
   progGlyph: { fontSize: 13.5, width: 14 },
   progTxt: { flex: 1, fontSize: 13.5, color: C.text2, lineHeight: 21 },
