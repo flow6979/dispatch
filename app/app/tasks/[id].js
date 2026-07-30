@@ -5,6 +5,7 @@ import { C, statusOf, stateLabel } from '../../src/theme';
 import { StatusBarFaux, BackRow, openUrl, prNumber } from '../../src/components';
 import { CapLabel, Card, Button, Dot, OfflineBanner } from '../../src/ui';
 import { usePoll } from '../../src/hooks';
+import { Markdown } from '../../src/markdown';
 import { api } from '../../src/api';
 
 export default function TaskDetail() {
@@ -75,15 +76,15 @@ export default function TaskDetail() {
 
             {task.answer ? (
               <Card style={{ borderColor: 'rgba(48,209,88,0.35)' }}>
-                <Text style={[styles.checkLabel, { color: C.ready }]}>💬 Answer</Text>
-                <Text style={styles.answerTxt}>{task.answer}</Text>
+                <Text style={[styles.checkLabel, { color: C.ready }]}>Answer</Text>
+                <Markdown text={task.answer} />
               </Card>
             ) : null}
 
             {task.answer ? null : task.summary ? (
               <View>
                 <CapLabel style={{ marginBottom: 6 }}>Summary</CapLabel>
-                <Text style={styles.summary}>{task.summary}</Text>
+                <Markdown text={task.summary} />
               </View>
             ) : spec && spec.goal ? (
               <View>
