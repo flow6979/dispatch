@@ -6,6 +6,7 @@ import { router } from 'expo-router';
 import { C } from './theme';
 import { Dot } from './ui';
 import { statusOf, stateLabel } from './theme';
+import { Feather } from '@expo/vector-icons';
 import { PressableScale, FadeIn } from './anim';
 
 // On a real device the OS already draws the status bar, so we must NOT render a
@@ -34,18 +35,21 @@ export function ContextBar({ context, offline }) {
   return (
     <View style={ctx.wrap}>
       <View style={ctx.repoRow}>
+        <Feather name="github" size={15} color={C.text2} style={{ marginRight: 8 }} />
         <Text style={ctx.repo} numberOfLines={1}>
           {repo}
         </Text>
-        <Pressable onPress={() => router.push('/repo-picker')}>
+        <Pressable onPress={() => router.push('/repo-picker')} style={ctx.switchBtn} hitSlop={8}>
           <Text style={ctx.switch}>switch</Text>
         </Pressable>
       </View>
       <View style={ctx.branchRow}>
-        <Pressable onPress={() => router.push('/branch-picker')}>
-          <Text style={ctx.branch}>⎇ {branch}</Text>
+        <Pressable onPress={() => router.push('/branch-picker')} style={ctx.branchBtn} hitSlop={6}>
+          <Feather name="git-branch" size={12} color={C.text2} style={{ marginRight: 5 }} />
+          <Text style={ctx.branch}>{branch}</Text>
         </Pressable>
         <View style={ctx.pill}>
+          <Feather name="shield" size={10} color={C.ready} style={{ marginRight: 4 }} />
           <Text style={ctx.pillTxt}>DRAFT ONLY</Text>
         </View>
       </View>
@@ -73,6 +77,7 @@ export function TaskRow({ task, onPress, showSub = true, index = 0 }) {
           )}
         </View>
         {running && pct != null && <Text style={tr.prog}>{pct}%</Text>}
+        <Feather name="chevron-right" size={18} color={C.muted} style={{ marginTop: 2, marginLeft: 2 }} />
       </PressableScale>
     </FadeIn>
   );
@@ -183,20 +188,24 @@ const ctx = StyleSheet.create({
     paddingBottom: 15,
     backgroundColor: C.surface,
     borderBottomWidth: 1,
-    borderBottomColor: C.border,
+    borderBottomColor: C.hairline,
   },
-  repoRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  repo: { flex: 1, fontSize: 16, fontWeight: '700', color: C.text },
-  switch: { fontSize: 12, color: C.accent, fontWeight: '600' },
-  branchRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 5 },
+  repoRow: { flexDirection: 'row', alignItems: 'center' },
+  repo: { flex: 1, fontSize: 16, fontWeight: '700', color: C.text, letterSpacing: -0.2 },
+  switchBtn: { backgroundColor: C.accentSoft, paddingHorizontal: 12, paddingVertical: 5, borderRadius: 12 },
+  switch: { fontSize: 12, color: C.accent, fontWeight: '700' },
+  branchRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 },
+  branchBtn: { flexDirection: 'row', alignItems: 'center' },
   branch: { fontSize: 12.5, color: C.text2 },
   pill: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: 'rgba(48,209,88,0.14)',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
+    paddingHorizontal: 9,
+    paddingVertical: 3,
     borderRadius: 20,
   },
-  pillTxt: { fontSize: 10, fontWeight: '700', color: C.ready, letterSpacing: 0.3 },
+  pillTxt: { fontSize: 10, fontWeight: '800', color: C.ready, letterSpacing: 0.4 },
 });
 
 const tr = StyleSheet.create({

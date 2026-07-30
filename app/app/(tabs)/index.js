@@ -12,6 +12,8 @@ import {
   Animated,
 } from 'react-native';
 import { router } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Feather } from '@expo/vector-icons';
 import { PressableScale, FadeIn, usePulse } from '../../src/anim';
 
 // On-device speech-to-text (free, no API key). Loaded defensively so the app
@@ -149,9 +151,15 @@ export default function Capture() {
               },
             ]}
           />
-          <PressableScale onPress={toggleVoice} style={[styles.mic, listening && styles.micOn]} scaleTo={0.92}>
-            <View style={styles.micStand} />
-            <View style={styles.micBody} />
+          <PressableScale onPress={toggleVoice} scaleTo={0.92}>
+            <LinearGradient
+              colors={listening ? ['#FBBF24', '#F97316'] : ['#5AA0FF', '#3B82F6']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.mic}
+            >
+              <Feather name="mic" size={38} color="#fff" />
+            </LinearGradient>
           </PressableScale>
         </View>
         <Text style={styles.hint}>
@@ -176,16 +184,18 @@ export default function Capture() {
             multiline={false}
           />
           <PressableScale
-            style={[styles.send, (!text.trim() || submitting) && { opacity: 0.4 }]}
+            style={(!text.trim() || submitting) && { opacity: 0.45 }}
             onPress={submit}
             disabled={!text.trim() || submitting}
             scaleTo={0.9}
           >
-            {submitting ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <Text style={styles.sendTxt}>→</Text>
-            )}
+            <LinearGradient colors={['#5AA0FF', '#3B82F6']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.send}>
+              {submitting ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Feather name="arrow-right" size={22} color="#fff" />
+              )}
+            </LinearGradient>
           </PressableScale>
         </View>
         <View style={styles.modeRow}>

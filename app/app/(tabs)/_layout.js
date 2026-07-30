@@ -1,33 +1,39 @@
 import React, { useRef, useEffect } from 'react';
 import { View, Text, Pressable, StyleSheet, Animated } from 'react-native';
 import { Tabs } from 'expo-router';
+import { Feather } from '@expo/vector-icons';
 import { C } from '../../src/theme';
 
-function TabButton({ focused, glyph, label, onPress }) {
+const META = {
+  index: { label: 'Capture', icon: 'mic' },
+  tasks: { label: 'Tasks', icon: 'layers' },
+  map: { label: 'Map', icon: 'share-2' },
+  digest: { label: 'Digest', icon: 'sunrise' },
+  settings: { label: 'Settings', icon: 'settings' },
+};
+
+function TabButton({ focused, icon, label, onPress }) {
   const a = useRef(new Animated.Value(focused ? 1 : 0)).current;
   useEffect(() => {
-    Animated.spring(a, { toValue: focused ? 1 : 0, useNativeDriver: true, speed: 18, bounciness: 9 }).start();
+    Animated.spring(a, { toValue: focused ? 1 : 0, useNativeDriver: true, speed: 16, bounciness: 10 }).start();
   }, [focused, a]);
-  const scale = a.interpolate({ inputRange: [0, 1], outputRange: [1, 1.18] });
-  const lift = a.interpolate({ inputRange: [0, 1], outputRange: [0, -2] });
+  const scale = a.interpolate({ inputRange: [0, 1], outputRange: [1, 1.06] });
+  const lift = a.interpolate({ inputRange: [0, 1], outputRange: [0, -1] });
   return (
     <Pressable style={styles.tab} onPress={onPress}>
-      <Animated.Text style={[styles.ic, focused && styles.on, { transform: [{ scale }, { translateY: lift }] }]}>
-        {glyph}
-      </Animated.Text>
+      <Animated.View style={[styles.iconPill, focused && styles.iconPillOn, { transform: [{ scale }, { translateY: lift }] }]}>
+        <Feather name={icon} size={20} color={focused ? C.accent : C.muted} />
+      </Animated.View>
       <Text style={[styles.label, focused && styles.on]}>{label}</Text>
     </Pressable>
   );
 }
 
-// Custom tab bar drawn to match the mockup, with an animated active icon.
 function TabBar({ state, navigation }) {
-  const labels = { index: 'Capture', tasks: 'Tasks', map: 'Map', digest: 'Digest', settings: 'Settings' };
-  const glyphs = { index: '◉', tasks: '▤', map: '◈', digest: '☰', settings: '⚙' };
   return (
     <View style={styles.tabs}>
       {state.routes
-        .filter((r) => labels[r.name])
+        .filter((r) => META[r.name])
         .map((route) => {
           const idx = state.routes.indexOf(route);
           const focused = state.index === idx;
@@ -36,7 +42,7 @@ function TabBar({ state, navigation }) {
             if (!focused && !event.defaultPrevented) navigation.navigate(route.name);
           };
           return (
-            <TabButton key={route.key} focused={focused} glyph={glyphs[route.name]} label={labels[route.name]} onPress={onPress} />
+            <TabButton key={route.key} focused={focused} icon={META[route.name].icon} label={META[route.name].label} onPress={onPress} />
           );
         })}
     </View>
@@ -63,15 +69,23 @@ export default function TabsLayout() {
 
 const styles = StyleSheet.create({
   tabs: {
-    height: 66,
+    height: 74,
     flexDirection: 'row',
     backgroundColor: C.surface,
     borderTopWidth: 1,
-    borderTopColor: C.border,
-    paddingBottom: 6,
+    borderTopColor: C.hairline,
+    paddingBottom: 10,
+    paddingTop: 6,
   },
   tab: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 3 },
-  ic: { fontSize: 20, color: C.muted },
-  label: { fontSize: 11, fontWeight: '600', color: C.muted },
+  iconPill: {
+    width: 46,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconPillOn: { backgroundColor: C.accentSoft },
+  label: { fontSize: 11, fontWeight: '600', color: C.muted, letterSpacing: 0.2 },
   on: { color: C.accent },
 });

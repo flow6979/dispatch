@@ -1,6 +1,7 @@
 // Shared UI primitives styled to match the mockup.
 import React from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { C, STATUS_COLOR } from './theme';
 import { PressableScale } from './anim';
 
@@ -31,15 +32,22 @@ export function Card({ children, style }) {
 }
 
 export function Button({ title, onPress, variant = 'pri', small, style, disabled }) {
-  const base = variant === 'pri' ? styles.btnPri : styles.btnSec;
-  const txt = variant === 'pri' ? styles.btnPriTxt : styles.btnSecTxt;
+  if (variant === 'pri') {
+    return (
+      <PressableScale onPress={disabled ? undefined : onPress} disabled={disabled} style={[disabled && { opacity: 0.5 }, style]}>
+        <LinearGradient colors={['#5AA0FF', '#3B82F6']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.btn, small && styles.btnSm, styles.btnPri]}>
+          <Text style={[styles.btnTxt, small && styles.btnSmTxt, styles.btnPriTxt]}>{title}</Text>
+        </LinearGradient>
+      </PressableScale>
+    );
+  }
   return (
     <PressableScale
       onPress={disabled ? undefined : onPress}
       disabled={disabled}
-      style={[styles.btn, small && styles.btnSm, base, disabled && { opacity: 0.5 }, style]}
+      style={[styles.btn, small && styles.btnSm, styles.btnSec, disabled && { opacity: 0.5 }, style]}
     >
-      <Text style={[styles.btnTxt, small && styles.btnSmTxt, txt]}>{title}</Text>
+      <Text style={[styles.btnTxt, small && styles.btnSmTxt, styles.btnSecTxt]}>{title}</Text>
     </PressableScale>
   );
 }
@@ -100,7 +108,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   btnSm: { height: 38, borderRadius: 10, paddingHorizontal: 16 },
-  btnPri: { backgroundColor: C.accent },
+  btnPri: { backgroundColor: C.accent, boxShadow: '0 6px 18px rgba(59,130,246,0.35)' },
   btnSec: { backgroundColor: C.surface2, borderWidth: 1, borderColor: C.border },
   btnTxt: { fontSize: 15, fontWeight: '700' },
   btnSmTxt: { fontSize: 13, fontWeight: '600' },
