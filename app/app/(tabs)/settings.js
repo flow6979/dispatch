@@ -90,25 +90,25 @@ export default function Settings() {
           </View>
         )}
         {runners.map((r) => (
-          <Pressable key={r.id} style={styles.row} onPress={r.paired && !r.selected ? () => selectRunner(r.id) : undefined}>
+          <Pressable key={r.id} style={styles.row} onPress={r.paired && !r.active ? () => selectRunner(r.id) : undefined}>
             {r.paired ? (
-              <View style={[styles.radio, r.selected && styles.radioOn]}>
-                {r.selected ? <View style={styles.radioDot} /> : null}
+              <View style={[styles.radio, r.active && styles.radioOn]}>
+                {r.active ? <View style={styles.radioDot} /> : null}
               </View>
             ) : (
               <Dot status="needsyou" style={{ marginRight: 11 }} />
             )}
             <View style={{ flex: 1 }}>
-              <Text style={styles.rowLabel}>{r.host || r.name}</Text>
+              <Text style={styles.rowLabel}>{r.name || r.host}</Text>
               <Text style={styles.rowSub}>
-                {r.ghUser ? `@${r.ghUser}` : 'unknown'} · {r.paired ? (r.active ? 'in use' : 'approved') : 'awaiting approval'}
+                {r.ghUser ? `@${r.ghUser}` : 'unknown'} · {r.paired ? (r.active ? 'running your tasks' : 'approved') : 'awaiting approval'}
               </Text>
             </View>
             {acting === r.id ? (
               <ActivityIndicator size="small" color={C.accent} />
             ) : r.paired ? (
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                {r.selected
+                {r.active
                   ? <Text style={[styles.action, { color: C.ready }]}>✓ Using</Text>
                   : <Pressable onPress={() => selectRunner(r.id)}><Text style={[styles.action, { color: C.accent }]}>Use</Text></Pressable>}
                 <Pressable onPress={() => revoke(r.id)} hitSlop={8}><Text style={[styles.action, { color: C.muted, marginLeft: 16 }]}>Revoke</Text></Pressable>
