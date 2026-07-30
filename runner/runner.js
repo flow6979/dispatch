@@ -173,6 +173,31 @@ function buildRepoMap(dir) {
 }
 
 /**
+ * Pick the files most likely relevant to a task by matching task words against
+ * repo file paths (0 API tokens). Given to claude as a starting point so it
+ * reads fewer speculative files. Appended AFTER the cached prefix (task-variable).
+ */
+function scopedFilesFor(text, dir, limit = 8) {
+  const files = gitLines(dir, ['ls-files']).filter((f) => SRC_EXT.has((f.split('.').pop() || '').toLowerCase()));
+  const stop = new Set(['the', 'and', 'for', 'add', 'fix', 'that', 'this', 'with', 'from', 'into', 'make', 'file', 'code', 'change', 'update', 'when', 'should', 'have', 'your', 'you']);
+  const words = String(text || '')
+    .toLowerCase().replace(/[^a-z0-9]+/g, ' ').split(' ')
+    .filter((w) => w.length >= 3 && !stop.has(w));
+  if (!words.length) return [];
+  const scored = files.map((f) => {
+    const base = f.split('/').pop().toLowerCase();
+    const path = f.toLowerCase();
+    let s = 0;
+    for (const w of words) {
+      if (base.includes(w)) s += 3;
+      else if (path.includes(w)) s += 1;
+    }
+    return { f, s };
+  }).filter((x) => x.s > 0).sort((a, b) => b.s - a.s);
+  return scored.slice(0, limit).map((x) => x.f);
+}
+
+/**
  * Build a dependency GRAPH of the repo via static analysis (0 tokens):
  * nodes = source files, edges = intra-repo import relationships.
  * Used by the app's "Map" tab to visualize how the repo connects.
@@ -763,7 +788,13 @@ async function runTaskReal(task, emit) {
       'whole repo; only read the specific files you need to edit. Make the necessary code ' +
       'changes to accomplish the task. Do not commit or push; leave changes in the working tree.\n\n' +
       `<repo_map>\n${repoMap}\n</repo_map>\n\n` +
-      `--- TASK ---\n${promptText}\n\nGoal: ${goal}\n`;
+      `--- TASK ---\n${promptText}\n\nGoal: ${goal}\n` +
+      (() => {
+        const scoped = scopedFilesFor(`${promptText} ${goal}`, repoDir);
+        return scoped.length
+          ? `\nLikely-relevant files (start here, but verify): ${scoped.join(', ')}\n`
+          : '';
+      })();
     if (!hasBinary('claude')) {
       return fail('FAILED', 'claude CLI not found on PATH.');
     }
@@ -1323,6 +1354,7 @@ module.exports = {
   handleChat,
   buildRepoMap,
   buildRepoGraph,
+  scopedFilesFor,
   ensureRepoIndex,
   runClaudeStream,
   describeToolUse,
