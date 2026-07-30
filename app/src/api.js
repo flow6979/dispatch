@@ -115,7 +115,7 @@ export const api = {
   approveRunner: (id) => req(`/api/runners/${encodeURIComponent(id)}/approve`, { method: 'POST' }),
   revokeRunner: (id) => req(`/api/runners/${encodeURIComponent(id)}/revoke`, { method: 'POST' }),
   newPairingCode: () => req('/api/pairing/new', { method: 'POST' }),
-  repoGraph: (repo) => req(`/api/repo-graph?repo=${encodeURIComponent(repo)}`),
+  repoGraph: (repo, type) => req(`/api/repo-graph?repo=${encodeURIComponent(repo)}${type ? `&type=${encodeURIComponent(type)}` : ''}`),
   buildRepoGraph: (repo) => req('/api/repo-graph/build', { method: 'POST', body: JSON.stringify({ repo }) }),
   getContext: () => req('/api/context'),
   setContext: (body) => req('/api/context', { method: 'POST', body: JSON.stringify(body) }),
