@@ -153,7 +153,7 @@ export default function MapScreen() {
             domStorageEnabled
             onMessage={(e) => { try { const m = JSON.parse(e.nativeEvent.data); if (m.type === 'node') setFocus(m.label || m.id); } catch (_) {} }}
           />
-          <View style={styles.legend}>
+          <View style={styles.legend} pointerEvents="none">
             <Text style={styles.legendTxt}>
               {graph.nodes.length} · {graph.edges.length} links{focus ? `  ·  ${focus}` : `  ·  ${TYPE_META[type]?.hint || ''}`}
             </Text>
@@ -176,6 +176,6 @@ const styles = StyleSheet.create({
   msg: { color: C.text2, fontSize: 14, textAlign: 'center', lineHeight: 21 },
   retry: { marginTop: 8, backgroundColor: C.surface2, borderWidth: 1, borderColor: C.border, borderRadius: 10, paddingHorizontal: 20, paddingVertical: 10 },
   retryTxt: { color: C.text, fontWeight: '700' },
-  legend: { position: 'absolute', top: 104, right: 12, backgroundColor: 'rgba(25,27,33,0.85)', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5 },
+  legend: { position: 'absolute', bottom: 34, left: 12, backgroundColor: 'rgba(25,27,33,0.9)', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5 },
   legendTxt: { color: C.text2, fontSize: 11 },
 });
