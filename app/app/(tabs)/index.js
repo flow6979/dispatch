@@ -233,6 +233,14 @@ export default function Capture() {
             : 'Build: always make code changes and open a PR.'}
         </Text>
 
+        {hasRepo && (
+          <PressableScale onPress={() => router.push('/issues')} style={styles.issuesLink} scaleTo={0.96}>
+            <Feather name="github" size={13} color={C.text2} />
+            <Text style={styles.issuesTxt}>Fix a GitHub issue</Text>
+            <Feather name="arrow-right" size={12} color={C.text2} />
+          </PressableScale>
+        )}
+
         {!hasRepo && !sendError && (
           <Pressable onPress={() => router.push('/repo-picker')}>
             <Text style={styles.repoHint}>
@@ -311,6 +319,8 @@ const styles = StyleSheet.create({
   },
   hint: { fontSize: 14, color: C.text2, letterSpacing: 0.1 },
   repoHint: { fontSize: 12.5, color: C.needsyou, textAlign: 'center', marginTop: 4 },
+  issuesLink: { flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: C.surface2, borderWidth: 1, borderColor: C.border, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8, marginTop: 2 },
+  issuesTxt: { fontSize: 12.5, color: C.text2, fontWeight: '600' },
   sendError: { fontSize: 12.5, color: C.blocked, textAlign: 'center', marginTop: 4 },
   modeRow: { flexDirection: 'row', gap: 8, marginTop: 6 },
   modeChip: {

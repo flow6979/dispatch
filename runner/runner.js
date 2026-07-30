@@ -936,6 +936,53 @@ async function fetchRepos() {
   }
 }
 
+/** List open issues for a repo so the phone can dispatch one as a task. */
+async function handleListIssues(msg, emit) {
+  const { repo, requestId } = msg;
+  let issues = [];
+  if (STUB_MODE) {
+    issues = [
+      { number: 42, title: 'Add rate limiting to /api/login', labels: ['security'], updatedAt: '2026-07-30T00:00:00Z' },
+      { number: 37, title: 'Flaky test in checkout flow', labels: ['bug', 'tests'], updatedAt: '2026-07-29T00:00:00Z' },
+    ];
+  } else if (hasBinary('gh') && repo) {
+    try {
+      const out = await run(
+        'gh',
+        ['issue', 'list', '--repo', repo, '--state', 'open', '--limit', '30', '--json', 'number,title,labels,updatedAt'],
+        { timeoutMs: 30000 },
+      );
+      issues = JSON.parse(out).map((i) => ({
+        number: i.number,
+        title: i.title,
+        labels: (i.labels || []).map((l) => l.name),
+        updatedAt: i.updatedAt,
+      }));
+    } catch (err) {
+      log('list_issues failed:', err.message);
+    }
+  }
+  emit({ type: 'issues', repo, requestId, issues });
+}
+
+/**
+ * If a task's text references an issue (#N), pull that issue's title/body so the
+ * agent works from the real requirement, not just the one-liner. Best-effort.
+ */
+async function fetchIssueContext(repo, text) {
+  const m = String(text || '').match(/#(\d+)\b/);
+  if (!m || !repo || STUB_MODE || !hasBinary('gh')) return '';
+  try {
+    const out = await run('gh', ['issue', 'view', m[1], '--repo', repo, '--json', 'number,title,body'], { timeoutMs: 30000 });
+    const j = JSON.parse(out);
+    const body = String(j.body || '').slice(0, 4000);
+    return `\n--- GitHub issue #${j.number}: ${j.title} ---\n${body}\n--- end issue ---\n`;
+  } catch (err) {
+    log('fetchIssueContext failed (continuing):', err.message);
+    return '';
+  }
+}
+
 /** Synchronous check whether a binary exists on PATH. */
 function hasBinary(name) {
   const res = spawnSync(process.platform === 'win32' ? 'where' : 'which', [name], {
@@ -1106,6 +1153,8 @@ async function runTaskReal(task, emit) {
     const repoMap = ensureRepoIndex(repoDir, repo, emit, taskId);
     emit({ type: 'progress', taskId, state: 'RUNNING', message: 'invoking claude to make changes', pct: 40 });
     const goal = (spec && spec.goal) || '';
+    // If the task references a GitHub issue (#N), pull its real requirement.
+    const issueCtx = await fetchIssueContext(repo, promptText);
     // Order matters for prompt caching: keep the STABLE prefix (standing
     // instructions + repo map) first and the per-task text last, so repeated
     // tasks on the same repo reuse the cached prefix.
@@ -1115,7 +1164,7 @@ async function runTaskReal(task, emit) {
       'whole repo; only read the specific files you need to edit. Make the necessary code ' +
       'changes to accomplish the task. Do not commit or push; leave changes in the working tree.\n\n' +
       `<repo_map>\n${repoMap}\n</repo_map>\n\n` +
-      `--- TASK ---\n${promptText}\n\nGoal: ${goal}\n` +
+      `--- TASK ---\n${promptText}\n\nGoal: ${goal}\n${issueCtx}` +
       (() => {
         const scoped = scopedFilesFor(`${promptText} ${goal}`, repoDir);
         return scoped.length
@@ -1674,6 +1723,8 @@ function startWsClient() {
         } else if (msg.type === 'merge_pr') {
           log(`merge_pr task=${msg.taskId}`);
           await handleMergePr(msg, emit);
+        } else if (msg.type === 'list_issues') {
+          await handleListIssues(msg, emit);
         } else if (msg.type === 'gh_switch') {
           try {
             await run('gh', ['auth', 'switch', '--user', msg.user], { timeoutMs: 20000 });

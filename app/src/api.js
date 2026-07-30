@@ -137,6 +137,7 @@ export const api = {
   getContext: () => req('/api/context'),
   setContext: (body) => req('/api/context', { method: 'POST', body: JSON.stringify(body) }),
   tasks: () => req('/api/tasks'),
+  issues: (repo) => req(`/api/issues?repo=${encodeURIComponent(repo)}`),
   createTask: (body) => req('/api/tasks', { method: 'POST', body: JSON.stringify(body) }),
   task: (id) => req(`/api/tasks/${id}`),
   confirm: (id) => req(`/api/tasks/${id}/confirm`, { method: 'POST', body: JSON.stringify({ approved: true }) }),

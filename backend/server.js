@@ -512,6 +512,11 @@ function handleRunnerMessage(entry, msg) {
       }
       break;
     }
+    case 'issues': {
+      // Runner replied with open issues for a repo — cache for the phone.
+      if (msg.repo) issuesCache[msg.repo] = { ts: now(), issues: Array.isArray(msg.issues) ? msg.issues : [] };
+      break;
+    }
     case 'spec_result': {
       const task = store.tasks[msg.taskId];
       if (!task) {
@@ -583,6 +588,9 @@ function handleRunnerMessage(entry, msg) {
 // ---------------------------------------------------------------------------
 
 let reposCache = null;
+// Per-repo open-issues cache filled by the runner on request.
+const issuesCache = {};
+const issuesRequestedAt = {};
 
 function stubRepos() {
   return [
@@ -850,6 +858,21 @@ async function build() {
 
   app.get('/api/tasks', async () => {
     return { tasks: tasksNewestFirst() };
+  });
+
+  // Open issues for a repo — served from the runner's gh, cached, refreshed on
+  // demand. First call may return loading:true with the last-known list.
+  app.get('/api/issues', async (req) => {
+    const repo = req.query && req.query.repo;
+    if (!repo) return { issues: [], loading: false };
+    const cached = issuesCache[repo];
+    const fresh = cached && now() - cached.ts < 60000;
+    const recentlyAsked = issuesRequestedAt[repo] && now() - issuesRequestedAt[repo] < 8000;
+    if (!fresh && !recentlyAsked) {
+      issuesRequestedAt[repo] = now();
+      sendToRunner({ type: 'list_issues', repo });
+    }
+    return { issues: cached ? cached.issues : [], loading: !cached };
   });
 
   app.post('/api/tasks', async (req, reply) => {
