@@ -30,6 +30,7 @@ export function statusOf(state) {
     case 'RUNNING':
     case 'TESTS':
     case 'SPEC_CONFIRMED':
+    case 'MERGING':
       return 'running';
     case 'PR_OPEN':
     case 'AWAITING_REVIEW':
@@ -78,6 +79,7 @@ export function stateLabel(state) {
     BLOCKED: 'blocked',
     FAILED: 'failed',
     HELD: 'held',
+    MERGING: 'merging…',
     MERGED: 'merged',
     DISCARDED: 'discarded',
   };

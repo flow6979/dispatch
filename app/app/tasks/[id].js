@@ -1,13 +1,20 @@
-import React from 'react';
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, ScrollView, ActivityIndicator, TextInput, Pressable, Platform } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
+import { Feather } from '@expo/vector-icons';
 import { C, statusOf, stateLabel } from '../../src/theme';
 import { StatusBarFaux, BackRow, openUrl, prNumber } from '../../src/components';
 import { CapLabel, Card, Button, Dot, OfflineBanner } from '../../src/ui';
+import { PressableScale } from '../../src/anim';
 import { usePoll } from '../../src/hooks';
 import { Markdown } from '../../src/markdown';
 import { DiffView, ChecksRow } from '../../src/diff';
 import { api } from '../../src/api';
+
+// Optional on-device voice (same defensive load as the Capture screen).
+let Speech = null;
+try { Speech = require('expo-speech-recognition').ExpoSpeechRecognitionModule; } catch (_) { Speech = null; }
+const VOICE_OK = !!Speech && Platform.OS !== 'web';
 
 function filesSummary(task) {
   const files = Array.isArray(task.files) ? task.files : [];
@@ -26,6 +33,53 @@ export default function TaskDetail() {
   const spec = task && task.spec;
   const progress = (task && task.progress) || [];
   const pr = task && task.prUrl;
+
+  const [reviseOpen, setReviseOpen] = useState(false);
+  const [comment, setComment] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [actionErr, setActionErr] = useState(null);
+  const [listening, setListening] = useState(false);
+  const baseComment = useRef('');
+
+  useEffect(() => {
+    if (!VOICE_OK) return;
+    const subs = [];
+    try {
+      subs.push(Speech.addListener('result', (e) => {
+        const phrase = (e.results && e.results[0] && e.results[0].transcript) || '';
+        if (phrase) setComment((baseComment.current ? baseComment.current + ' ' : '') + phrase);
+      }));
+      subs.push(Speech.addListener('error', () => setListening(false)));
+      subs.push(Speech.addListener('end', () => setListening(false)));
+    } catch (_) {}
+    return () => subs.forEach((s) => { try { s.remove(); } catch (_) {} });
+  }, []);
+
+  async function toggleVoice() {
+    if (!VOICE_OK) return;
+    if (listening) { try { Speech.stop(); } catch (_) {} setListening(false); return; }
+    try {
+      const perm = await Speech.requestPermissionsAsync();
+      if (!perm || !perm.granted) return;
+      baseComment.current = comment.trim();
+      setListening(true);
+      Speech.start({ lang: 'en-US', interimResults: true, continuous: false });
+    } catch (_) { setListening(false); }
+  }
+
+  async function doMerge() {
+    setBusy(true); setActionErr(null);
+    try { await api.mergeTask(id); } catch (e) { setActionErr(`Merge failed: ${(e.message || '').slice(0, 90)}`); }
+    finally { setBusy(false); }
+  }
+  async function doRevise() {
+    const c = comment.trim();
+    if (!c) return;
+    setBusy(true); setActionErr(null);
+    try { await api.reviseTask(id, c); setComment(''); setReviseOpen(false); }
+    catch (e) { setActionErr(`Couldn't send: ${(e.message || '').slice(0, 90)}`); }
+    finally { setBusy(false); }
+  }
 
   return (
     <View style={styles.screen}>
@@ -141,17 +195,66 @@ export default function TaskDetail() {
 
             <View style={{ flex: 1, minHeight: 12 }} />
 
-            {task.state === 'ANSWERED' ? null : pr ? (
-              <Button
-                title={`Open PR${prNumber(pr) ? ` #${prNumber(pr)}` : ''} ↗`}
-                onPress={() => openUrl(pr)}
-              />
+            {task.state === 'ANSWERED' ? null : task.state === 'MERGED' ? (
+              <View style={styles.mergedBadge}>
+                <Feather name="git-merge" size={16} color={C.ready} />
+                <Text style={styles.mergedTxt}>Merged</Text>
+                {pr ? (
+                  <Pressable onPress={() => openUrl(pr)} hitSlop={8} style={{ marginLeft: 'auto' }}>
+                    <Text style={styles.openPrLink}>View PR ↗</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            ) : (status === 'ready' && pr) ? (
+              <>
+                <Button
+                  title={task.state === 'MERGING' ? 'Merging…' : 'Approve & merge'}
+                  onPress={doMerge}
+                  disabled={busy || task.state === 'MERGING'}
+                />
+                <Button
+                  title="Request changes"
+                  variant="sec"
+                  style={{ marginTop: 10 }}
+                  onPress={() => setReviseOpen((o) => !o)}
+                  disabled={busy || task.state === 'MERGING'}
+                />
+                {reviseOpen && (
+                  <View style={styles.reviseBox}>
+                    <View style={styles.reviseInputRow}>
+                      <TextInput
+                        style={styles.reviseInput}
+                        placeholder="What should change? e.g. “rename it to authGuard and add a test”"
+                        placeholderTextColor={C.muted}
+                        value={comment}
+                        onChangeText={setComment}
+                        multiline
+                      />
+                      {VOICE_OK && (
+                        <PressableScale onPress={toggleVoice} scaleTo={0.9} style={[styles.micBtn, listening && styles.micBtnOn]}>
+                          <Feather name={listening ? 'square' : 'mic'} size={16} color={listening ? '#fff' : C.accent} />
+                        </PressableScale>
+                      )}
+                    </View>
+                    <Button
+                      title={busy ? 'Sending…' : 'Send to agent'}
+                      small
+                      onPress={doRevise}
+                      disabled={busy || !comment.trim()}
+                      style={{ marginTop: 10 }}
+                    />
+                    <Text style={styles.reviseHint}>The agent will revise this PR and push an update.</Text>
+                  </View>
+                )}
+                <Pressable onPress={() => openUrl(pr)} hitSlop={8} style={{ marginTop: 12, alignSelf: 'center' }}>
+                  <Text style={styles.openPrLink}>Open PR{prNumber(pr) ? ` #${prNumber(pr)}` : ''} on GitHub ↗</Text>
+                </Pressable>
+                {actionErr ? <Text style={styles.actionErr}>{actionErr}</Text> : null}
+              </>
+            ) : pr ? (
+              <Button title={`Open PR${prNumber(pr) ? ` #${prNumber(pr)}` : ''} ↗`} onPress={() => openUrl(pr)} />
             ) : (
-              <Button
-                title="Open PR — pending"
-                disabled
-                onPress={() => {}}
-              />
+              <Button title="Open PR — pending" disabled onPress={() => {}} />
             )}
             {status === 'needsyou' && task.state === 'SPEC_DRAFTED' && (
               <Button
@@ -207,6 +310,16 @@ const styles = StyleSheet.create({
   answerTxt: { fontSize: 14, color: C.text, lineHeight: 22 },
   changesHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
   changesSummary: { fontSize: 12, color: C.text2, fontWeight: '600' },
+  mergedBadge: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(48,209,88,0.12)', borderWidth: 1, borderColor: 'rgba(48,209,88,0.4)', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12 },
+  mergedTxt: { fontSize: 14, fontWeight: '800', color: C.ready },
+  openPrLink: { fontSize: 13, color: C.accent, fontWeight: '600' },
+  reviseBox: { marginTop: 12, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 14, padding: 12 },
+  reviseInputRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
+  reviseInput: { flex: 1, minHeight: 44, maxHeight: 120, color: C.text, fontSize: 14, lineHeight: 20, paddingTop: 6, outlineStyle: 'none' },
+  micBtn: { width: 40, height: 40, borderRadius: 12, backgroundColor: C.accentSoft, alignItems: 'center', justifyContent: 'center' },
+  micBtnOn: { backgroundColor: C.blocked },
+  reviseHint: { fontSize: 11.5, color: C.muted, marginTop: 8 },
+  actionErr: { fontSize: 12.5, color: C.blocked, textAlign: 'center', marginTop: 10 },
   progRow: { flexDirection: 'row', gap: 8, alignItems: 'flex-start', paddingVertical: 2 },
   progGlyph: { fontSize: 13.5, width: 14 },
   progTxt: { flex: 1, fontSize: 13.5, color: C.text2, lineHeight: 21 },

@@ -906,6 +906,62 @@ async function build() {
     return { task };
   });
 
+  // Approve & merge the task's open PR from the phone.
+  app.post('/api/tasks/:id/merge', async (req, reply) => {
+    const task = store.tasks[req.params.id];
+    if (!task) { reply.code(404); return { error: 'not_found' }; }
+    if (!task.prUrl) { reply.code(400); return { error: 'no_pr' }; }
+    const method = (req.body && req.body.method) || 'squash';
+    task.state = 'MERGING';
+    touchTask(task);
+    const sent = sendToRunner({
+      type: 'merge_pr',
+      taskId: task.id,
+      prUrl: task.prUrl,
+      repo: task.repo,
+      workBranch: task.workBranch,
+      mergeMethod: method,
+    });
+    if (!sent) {
+      // No runner to perform the merge — revert optimistic state.
+      task.state = 'PR_OPEN';
+      touchTask(task);
+      reply.code(503);
+      return { error: 'no_runner' };
+    }
+    return { task };
+  });
+
+  // Request changes: the agent revises the same branch/PR with the feedback.
+  app.post('/api/tasks/:id/revise', async (req, reply) => {
+    const task = store.tasks[req.params.id];
+    if (!task) { reply.code(404); return { error: 'not_found' }; }
+    const comment = String((req.body && req.body.comment) || '').trim();
+    if (!comment) { reply.code(400); return { error: 'empty_comment' }; }
+    task.reviewNotes = Array.isArray(task.reviewNotes) ? task.reviewNotes : [];
+    task.reviewNotes.push({ ts: now(), comment });
+    task.state = 'SPEC_CONFIRMED';
+    task._autoProceedAt = null;
+    touchTask(task);
+    const sent = sendToRunner({
+      type: 'run_task',
+      taskId: task.id,
+      promptText:
+        `${task.promptText}\n\n--- REVISION REQUESTED ---\n` +
+        `Address this reviewer feedback on the existing open PR (branch ${task.workBranch}). ` +
+        `Make the smallest change that satisfies it; keep everything else intact:\n${comment}`,
+      spec: task.spec,
+      repo: task.repo,
+      baseBranch: task.baseBranch,
+      workBranch: task.workBranch,
+      budgetTokens: task.budgetTokens,
+      budgetUsd: task.budgetUsd,
+      revise: true,
+    });
+    if (!sent) { reply.code(503); return { error: 'no_runner' }; }
+    return { task };
+  });
+
   app.post('/api/tasks/:id/hold', async (req, reply) => {
     const task = store.tasks[req.params.id];
     if (!task) {

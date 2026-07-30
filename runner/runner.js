@@ -1076,10 +1076,24 @@ async function runTaskReal(task, emit) {
       if (fs.existsSync(worktreeDir)) {
         await run('git', ['worktree', 'remove', '--force', worktreeDir], { cwd: repoDir, timeoutMs: 60000 }).catch(() => {});
       }
-      const baseRef = baseBranch ? `origin/${baseBranch}` : (defaultBranch ? `origin/${defaultBranch}` : 'HEAD');
-      await run('git', ['worktree', 'add', '-b', workBranch, worktreeDir, baseRef], {
-        cwd: repoDir, timeoutMs: 120000,
-      });
+      // If the work branch already exists on origin, this is a revision of an
+      // open PR — continue that branch (-B resets the local branch to the remote
+      // tip). Otherwise start a fresh branch off the base.
+      let existingRemote = false;
+      try {
+        await run('git', ['rev-parse', '--verify', `origin/${workBranch}`], { cwd: repoDir, timeoutMs: 20000 });
+        existingRemote = true;
+      } catch (_) { /* branch not on origin yet — fresh task */ }
+      if (existingRemote) {
+        await run('git', ['worktree', 'add', '-B', workBranch, worktreeDir, `origin/${workBranch}`], {
+          cwd: repoDir, timeoutMs: 120000,
+        });
+      } else {
+        const baseRef = baseBranch ? `origin/${baseBranch}` : (defaultBranch ? `origin/${defaultBranch}` : 'HEAD');
+        await run('git', ['worktree', 'add', '-b', workBranch, worktreeDir, baseRef], {
+          cwd: repoDir, timeoutMs: 120000,
+        });
+      }
     } catch (err) {
       return fail('FAILED', `worktree add failed: ${err.message}`);
     }
@@ -1176,7 +1190,15 @@ async function runTaskReal(task, emit) {
         const m = out.match(/https?:\/\/\S+/);
         prUrl = m ? m[0] : out.trim();
       } catch (err) {
-        return fail('FAILED', `gh pr create failed: ${err.message}`);
+        // A PR may already exist for this branch (a revision of an open PR).
+        // Reuse it instead of failing — the push above already updated it.
+        try {
+          const view = await run('gh', ['pr', 'view', workBranch, '--json', 'url', '-q', '.url'], { cwd: worktreeDir, timeoutMs: 60000 });
+          if (view.trim()) prUrl = view.trim();
+          else return fail('FAILED', `gh pr create failed: ${err.message}`);
+        } catch (_) {
+          return fail('FAILED', `gh pr create failed: ${err.message}`);
+        }
       }
     } else {
       return fail('FAILED', 'gh CLI not found; pushed branch but could not open a draft PR.');
@@ -1248,6 +1270,36 @@ async function captureChanges(dir, base) {
     }
   }
   return out;
+}
+
+/**
+ * Merge an open PR on request from the phone. Marks it ready (in case it's a
+ * draft) then merges with the chosen method and deletes the branch. Emits a
+ * terminal MERGED result, or leaves the task at PR_OPEN with an error note if
+ * the merge can't proceed (e.g. checks pending, conflicts).
+ */
+async function handleMergePr(msg, emit) {
+  const { taskId, prUrl, mergeMethod } = msg;
+  emit({ type: 'progress', taskId, state: 'RUNNING', message: '⛙ merging PR', pct: 90 });
+  if (STUB_MODE) {
+    emit({ type: 'result', taskId, state: 'MERGED', prUrl, summary: `PR merged (stub mode).` });
+    return;
+  }
+  if (!hasBinary('gh')) {
+    emit({ type: 'result', taskId, state: 'PR_OPEN', prUrl, summary: 'Could not merge: gh CLI not found on the runner.' });
+    return;
+  }
+  const method = mergeMethod === 'merge' ? '--merge' : mergeMethod === 'rebase' ? '--rebase' : '--squash';
+  try {
+    // Drafts can't be merged — mark ready first (ignore if already ready).
+    try { await run('gh', ['pr', 'ready', prUrl], { timeoutMs: 30000 }); } catch (_) {}
+    await run('gh', ['pr', 'merge', prUrl, method, '--delete-branch'], { timeoutMs: 180000 });
+    emit({ type: 'result', taskId, state: 'MERGED', prUrl, summary: `PR merged (${method.replace('--', '')}) and branch deleted.` });
+  } catch (err) {
+    // Leave it reviewable — a failed merge usually means checks pending or a
+    // conflict; the user can retry or open the PR.
+    emit({ type: 'result', taskId, state: 'PR_OPEN', prUrl, summary: `Merge failed: ${String(err.message).slice(0, 200)}` });
+  }
 }
 
 /** Detect a test command from the worktree and run it. */
@@ -1548,8 +1600,11 @@ function startWsClient() {
           log(`generate_spec task=${msg.taskId}`);
           await handleGenerateSpec(msg, emit);
         } else if (msg.type === 'run_task') {
-          log(`run_task task=${msg.taskId} (${STUB_MODE ? 'STUB' : 'REAL'})`);
+          log(`run_task task=${msg.taskId} (${STUB_MODE ? 'STUB' : 'REAL'})${msg.revise ? ' [revision]' : ''}`);
           await handleRunTask(msg, emit);
+        } else if (msg.type === 'merge_pr') {
+          log(`merge_pr task=${msg.taskId}`);
+          await handleMergePr(msg, emit);
         } else if (msg.type === 'gh_switch') {
           try {
             await run('gh', ['auth', 'switch', '--user', msg.user], { timeoutMs: 20000 });

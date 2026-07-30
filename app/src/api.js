@@ -141,4 +141,6 @@ export const api = {
   task: (id) => req(`/api/tasks/${id}`),
   confirm: (id) => req(`/api/tasks/${id}/confirm`, { method: 'POST', body: JSON.stringify({ approved: true }) }),
   hold: (id) => req(`/api/tasks/${id}/hold`, { method: 'POST' }),
+  mergeTask: (id, method = 'squash') => req(`/api/tasks/${id}/merge`, { method: 'POST', body: JSON.stringify({ method }) }),
+  reviseTask: (id, comment) => req(`/api/tasks/${id}/revise`, { method: 'POST', body: JSON.stringify({ comment }) }),
 };
