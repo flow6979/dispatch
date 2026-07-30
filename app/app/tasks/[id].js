@@ -8,7 +8,7 @@ import { CapLabel, Card, Button, Dot, OfflineBanner } from '../../src/ui';
 import { PressableScale } from '../../src/anim';
 import { usePoll } from '../../src/hooks';
 import { Markdown } from '../../src/markdown';
-import { DiffView, ChecksRow } from '../../src/diff';
+import { DiffView, ChecksRow, ReviewCard } from '../../src/diff';
 import { api } from '../../src/api';
 
 // Optional on-device voice (same defensive load as the Capture screen).
@@ -156,12 +156,13 @@ export default function TaskDetail() {
               </View>
             ) : null}
 
-            {(task.checks || (Array.isArray(task.files) && task.files.length > 0) || task.diff) && (
+            {(task.review || task.checks || (Array.isArray(task.files) && task.files.length > 0) || task.diff) && (
               <View>
                 <View style={styles.changesHead}>
                   <CapLabel>Changes</CapLabel>
                   {filesSummary(task) ? <Text style={styles.changesSummary}>{filesSummary(task)}</Text> : null}
                 </View>
+                <ReviewCard review={task.review} />
                 <ChecksRow checks={task.checks} />
                 <DiffView diff={task.diff} truncated={task.diffTruncated} />
               </View>

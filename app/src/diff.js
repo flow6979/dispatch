@@ -96,6 +96,31 @@ export function DiffView({ diff, truncated }) {
   );
 }
 
+export function ReviewCard({ review }) {
+  if (!review || (!review.summary && !(review.concerns && review.concerns.length))) return null;
+  const risk = review.risk || 'low';
+  const color = risk === 'high' ? C.blocked : risk === 'medium' ? C.needsyou : C.ready;
+  const icon = risk === 'high' ? 'alert-triangle' : risk === 'medium' ? 'alert-circle' : 'shield';
+  const dot = (sev) => (sev === 'high' ? C.blocked : sev === 'medium' ? C.needsyou : C.muted);
+  return (
+    <View style={[s.review, { borderColor: `${color}44` }]}>
+      <View style={s.reviewHead}>
+        <Feather name={icon} size={15} color={color} />
+        <Text style={[s.reviewRisk, { color }]}>{risk} risk</Text>
+        <View style={{ flex: 1 }} />
+        <Text style={s.reviewTag}>self-review</Text>
+      </View>
+      {review.summary ? <Text style={s.reviewSummary}>{review.summary}</Text> : null}
+      {Array.isArray(review.concerns) && review.concerns.map((c, i) => (
+        <View key={i} style={s.concern}>
+          <View style={[s.concernDot, { backgroundColor: dot(c.severity) }]} />
+          <Text style={s.concernTxt}>{c.note}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 export function ChecksRow({ checks }) {
   const t = checks && checks.tests;
   if (!t) return null;
@@ -132,4 +157,12 @@ const s = StyleSheet.create({
   checks: { flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9, marginBottom: 12, backgroundColor: C.surface },
   checksTxt: { fontSize: 13, fontWeight: '700' },
   checksCmd: { flex: 1, fontFamily: 'monospace', fontSize: 11, color: C.muted, textAlign: 'right' },
+  review: { borderWidth: 1, borderRadius: 12, padding: 14, marginBottom: 12, backgroundColor: C.surface },
+  reviewHead: { flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 8 },
+  reviewRisk: { fontSize: 13, fontWeight: '800', textTransform: 'capitalize' },
+  reviewTag: { fontSize: 10.5, fontWeight: '700', color: C.muted, letterSpacing: 0.5, textTransform: 'uppercase' },
+  reviewSummary: { fontSize: 13.5, color: C.text2, lineHeight: 20, marginBottom: 4 },
+  concern: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginTop: 8 },
+  concernDot: { width: 7, height: 7, borderRadius: 4, marginTop: 6 },
+  concernTxt: { flex: 1, fontSize: 13, color: C.text, lineHeight: 19 },
 });

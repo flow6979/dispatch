@@ -563,6 +563,7 @@ function handleRunnerMessage(entry, msg) {
       if (msg.files !== undefined) task.files = msg.files;
       if (msg.diffTruncated !== undefined) task.diffTruncated = msg.diffTruncated;
       if (msg.checks !== undefined) task.checks = msg.checks;
+      if (msg.review !== undefined) task.review = msg.review;
       task.progress.push({
         ts: now(),
         state: task.state,

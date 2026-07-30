@@ -615,6 +615,8 @@ const CLASSIFY_MODEL = process.env.DISPATCH_CLASSIFY_MODEL || 'haiku';
 const SPEC_MODEL = process.env.DISPATCH_SPEC_MODEL || 'haiku';
 const CHAT_MODEL = process.env.DISPATCH_CHAT_MODEL || 'sonnet';
 const EDIT_MODEL = process.env.DISPATCH_EDIT_MODEL || 'sonnet'; // set to 'opus' for hard tasks
+const REVIEW_MODEL = process.env.DISPATCH_REVIEW_MODEL || 'sonnet'; // adversarial self-review
+const SELF_REVIEW = process.env.DISPATCH_SELF_REVIEW !== '0'; // AI self-review on by default
 // Hard dollar cap per task (claude stops itself via --max-budget-usd).
 const DEFAULT_BUDGET_USD = Number(process.env.DISPATCH_BUDGET_USD || 3);
 
@@ -1207,6 +1209,10 @@ async function runTaskReal(task, emit) {
     // Capture the change for phone review: unified diff + per-file line stats.
     const changes = await captureChanges(worktreeDir, baseBranch || defaultBranch || 'main');
 
+    // Adversarial self-review before it reaches the phone (advisory).
+    emit({ type: 'progress', taskId, state: 'PR_OPEN', message: '🔍 self-reviewing the change', pct: 97 });
+    const review = await selfReview({ diff: changes.diff, files: changes.files, goal });
+
     // (g) Terminal success.
     emit({
       type: 'result',
@@ -1218,6 +1224,7 @@ async function runTaskReal(task, emit) {
       diff: changes.diff,
       files: changes.files,
       diffTruncated: changes.truncated,
+      review,
       checks: {
         tests: {
           ran: testResult.ran,
@@ -1270,6 +1277,68 @@ async function captureChanges(dir, base) {
     }
   }
   return out;
+}
+
+/**
+ * Free (0-token) risk signals from the changed file paths and diff content.
+ * Catches the classes of change most worth a second look before merging.
+ */
+function staticRiskSignals(files, diff) {
+  const paths = (files || []).map((f) => f.path || '');
+  const has = (re) => paths.some((p) => re.test(p));
+  const signals = [];
+  if (has(/(^|\/)(db\/)?migrat|schema\.rb|\.sql$|alembic|prisma\/migrations|knex/i))
+    signals.push({ severity: 'high', note: 'Database migration / schema change' });
+  if (has(/auth|login|password|secret|crypto|session|permission|(^|\/)acl|jwt|oauth/i))
+    signals.push({ severity: 'high', note: 'Touches authentication / security code' });
+  if (has(/package-lock|yarn\.lock|pnpm-lock|Gemfile\.lock|go\.sum|poetry\.lock|requirements.*\.txt/i))
+    signals.push({ severity: 'medium', note: 'Dependency / lockfile change' });
+  if (has(/\.github\/workflows|\.circleci|\bci\.ya?ml/i))
+    signals.push({ severity: 'medium', note: 'CI/CD pipeline change' });
+  if (has(/dockerfile|docker-compose|\.tf$|k8s|helm|\.env(\.|$)|\.pem$|\.key$/i))
+    signals.push({ severity: 'medium', note: 'Infra / config change' });
+  const totalDel = (files || []).reduce((n, f) => n + (f.del || 0), 0);
+  if (totalDel > 80) signals.push({ severity: 'medium', note: `Large deletion (${totalDel} lines removed)` });
+  if ((files || []).length > 15) signals.push({ severity: 'medium', note: `Wide change (${files.length} files)` });
+  if (/BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|\bapi[_-]?key\b\s*[:=]\s*['"][A-Za-z0-9]/i.test(diff || ''))
+    signals.push({ severity: 'high', note: 'Possible hard-coded secret in the diff' });
+  return signals;
+}
+
+/**
+ * Self-review the change before it reaches the phone: free static risk signals
+ * plus (unless disabled) one cheap adversarial Claude pass over the diff. Never
+ * throws — review is advisory. Returns { risk, summary, concerns[] }.
+ */
+async function selfReview({ diff, files, goal }) {
+  const statics = staticRiskSignals(files, diff);
+  const order = { low: 0, medium: 1, high: 2 };
+  let ai = null;
+  const lines = (files || []).reduce((n, f) => n + (f.add || 0) + (f.del || 0), 0);
+  if (SELF_REVIEW && !STUB_MODE && diff && lines > 0 && lines <= 1200 && hasBinary('claude')) {
+    try {
+      const prompt =
+        'You are a strict senior code reviewer. Review this diff for real problems only: correctness ' +
+        'bugs, security issues, missing edge cases, or anything that would fail review. Be terse and ' +
+        'specific — do not nitpick style. Output ONLY JSON: ' +
+        '{"risk":"low|medium|high","summary":string,"concerns":[{"severity":"low|medium|high","note":string}]}. ' +
+        'If it looks correct and safe, return risk "low" and an empty concerns array.\n\n' +
+        `Task goal: ${goal || '(none)'}\n\n<diff>\n${String(diff).slice(0, 60000)}\n</diff>`;
+      const out = await runClaude(prompt, { cwd: os.tmpdir(), timeoutMs: 120000, model: REVIEW_MODEL, maxBudgetUsd: 0.25 });
+      ai = extractJson(out);
+    } catch (err) {
+      log('selfReview failed (non-fatal):', err.message);
+    }
+  }
+  const concerns = [...statics, ...((ai && Array.isArray(ai.concerns)) ? ai.concerns : [])]
+    .filter((c) => c && c.note)
+    .slice(0, 10);
+  let risk = 'low';
+  for (const c of concerns) if ((order[c.severity] || 0) > order[risk]) risk = c.severity;
+  if (ai && ai.risk && (order[ai.risk] || 0) > order[risk]) risk = ai.risk;
+  const summary = (ai && ai.summary) ||
+    (concerns.length ? `${concerns.length} thing(s) worth a look before merging.` : 'Self-review found no issues.');
+  return { risk, summary, concerns, reviewed: !!ai };
 }
 
 /**
