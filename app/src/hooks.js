@@ -61,3 +61,13 @@ export function useRunners(intervalMs = 3000) {
   const runners = (data && data.runners) || [];
   return { runners, offline, refresh };
 }
+
+export function useSettings(intervalMs = 4000) {
+  const { data, offline, refresh } = usePoll(() => api.settings(), intervalMs);
+  return { settings: data, offline, refresh };
+}
+
+export function useGithub(intervalMs = 4000) {
+  const { data, offline, refresh } = usePoll(() => api.github(), intervalMs);
+  return { github: data || { accounts: [], active: null }, offline, refresh };
+}

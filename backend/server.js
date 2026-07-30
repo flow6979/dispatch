@@ -45,7 +45,11 @@ let store = {
   pairedRunners: {},
   // per-device tokens: token -> { kind:'phone'|'runner', id, label, createdAt }
   deviceTokens: {},
+  // user-editable settings
+  settings: { digestTime: '07:30', autonomy: 'auto', taskBudgetUsd: 3, push: true, quietHours: true },
 };
+
+const DEFAULT_SETTINGS = { digestTime: '07:30', autonomy: 'auto', taskBudgetUsd: 3, push: true, quietHours: true };
 
 function loadStore() {
   try {
@@ -59,6 +63,7 @@ function loadStore() {
           parsed.pairedRunners && typeof parsed.pairedRunners === 'object' ? parsed.pairedRunners : {};
         store.deviceTokens =
           parsed.deviceTokens && typeof parsed.deviceTokens === 'object' ? parsed.deviceTokens : {};
+        store.settings = { ...DEFAULT_SETTINGS, ...(parsed.settings && typeof parsed.settings === 'object' ? parsed.settings : {}) };
       }
     }
   } catch (err) {
@@ -196,7 +201,7 @@ function newTask({ promptText, repo, baseBranch, workBranch, mode }) {
     tokensUsed: 0,
     costUsd: 0,
     budgetTokens: DEFAULT_BUDGET_TOKENS,
-    budgetUsd: DEFAULT_BUDGET_USD,
+    budgetUsd: (store.settings && store.settings.taskBudgetUsd) || DEFAULT_BUDGET_USD,
     createdAt: ts,
     updatedAt: ts,
     // internal-only bookkeeping (not part of contract, but harmless to expose)
@@ -224,6 +229,8 @@ const runners = new Set(); // Set<{ socket, runnerName }>
 // runner re-sends on index build or on-demand, so they don't need persisting.
 const repoGraphs = new Map();
 const repoGraphStatus = new Map();
+// GitHub accounts reported by the runner: { accounts: [logins], active: login }
+let runnerGithub = { accounts: [], active: null };
 
 function safeSend(socket, obj) {
   try {
@@ -438,6 +445,10 @@ function handleRunnerMessage(entry, msg) {
       }
       break;
     }
+    case 'github': {
+      if (Array.isArray(msg.accounts)) runnerGithub = { accounts: msg.accounts, active: msg.active || null };
+      break;
+    }
     case 'repo_graph': {
       if (msg.repo && (msg.graphs || msg.graph)) {
         const graphs = msg.graphs || { files: msg.graph };
@@ -479,7 +490,9 @@ function handleRunnerMessage(entry, msg) {
       task.spec = msg.spec || null;
       task.state = 'SPEC_DRAFTED';
       touchTask(task);
-      scheduleAutoProceed(task);
+      // Autonomy: 'auto' proceeds after the timer; 'draft' waits for the user
+      // to confirm from the phone.
+      if (!store.settings || store.settings.autonomy !== 'review') scheduleAutoProceed(task);
       break;
     }
     case 'progress': {
@@ -699,6 +712,35 @@ async function build() {
   app.get('/api/repos', async () => {
     const repos = await fetchRepos();
     return { repos };
+  });
+
+  // --- user settings (editable from the phone) ---
+  app.get('/api/settings', async () => store.settings);
+  app.post('/api/settings', async (req) => {
+    const b = req.body || {};
+    const s = store.settings;
+    if (typeof b.digestTime === 'string') s.digestTime = b.digestTime;
+    if (b.autonomy === 'review' || b.autonomy === 'auto') s.autonomy = b.autonomy;
+    if (typeof b.taskBudgetUsd === 'number' && b.taskBudgetUsd > 0) s.taskBudgetUsd = Math.min(50, b.taskBudgetUsd);
+    if (typeof b.push === 'boolean') s.push = b.push;
+    if (typeof b.quietHours === 'boolean') s.quietHours = b.quietHours;
+    saveStore();
+    return store.settings;
+  });
+
+  // --- GitHub accounts (managed on the laptop via the runner's gh) ---
+  app.get('/api/github', async () => runnerGithub);
+  app.post('/api/github/switch', async (req) => {
+    const user = (req.body && req.body.user) || '';
+    if (!user) return { error: 'user required' };
+    const ok = sendToRunner({ type: 'gh_switch', user });
+    return { ok };
+  });
+  app.post('/api/github/logout', async (req) => {
+    const user = (req.body && req.body.user) || '';
+    if (!user) return { error: 'user required' };
+    const ok = sendToRunner({ type: 'gh_logout', user });
+    return { ok };
   });
 
   // Repo dependency graph for the Map tab. Returns the cached graph if present;

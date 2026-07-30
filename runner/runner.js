@@ -82,9 +82,30 @@ function ghLoginSync() {
   } catch (_) { /* ignore */ }
   return null;
 }
-const GH_USER = ghLoginSync();
+let GH_USER = ghLoginSync();
 const HOST = os.hostname();
 const RUNNER_ID = `${HOST}:${GH_USER || 'unknown'}`;
+
+// List all gh accounts logged in on this machine + the active one.
+function ghAccountsSync() {
+  try {
+    const res = spawnSync('gh', ['auth', 'status'], { encoding: 'utf8', timeout: 10000 });
+    const text = (res.stdout || '') + (res.stderr || '');
+    const accounts = [];
+    let active = null;
+    // Lines like: "  ✓ Logged in to github.com account NAME (...)" and "Active account: true"
+    const re = /account\s+([A-Za-z0-9-]+)\s*\(/g; let m;
+    while ((m = re.exec(text))) accounts.push(m[1]);
+    // active: the account block that says "Active account: true"; fallback to gh api user
+    const blocks = text.split(/Logged in to github\.com account\s+/).slice(1);
+    for (const b of blocks) {
+      const name = (b.match(/^([A-Za-z0-9-]+)/) || [])[1];
+      if (name && /Active account:\s*true/i.test(b)) active = name;
+    }
+    if (!active) active = ghLoginSync();
+    return { accounts: [...new Set(accounts)], active };
+  } catch (_) { return { accounts: GH_USER ? [GH_USER] : [], active: GH_USER }; }
+}
 
 // Stub mode is the DEFAULT: ON when DISPATCH_STUB is unset OR equals "1".
 // Only DISPATCH_STUB=0 turns REAL mode on.
@@ -1451,6 +1472,8 @@ function startWsClient() {
         log('offering saved state backup to backend');
         emit({ type: 'state_restore', state: mirror.state, savedAt: mirror.savedAt });
       }
+      // Report the machine's GitHub accounts so the phone can show/switch them.
+      try { const gh = ghAccountsSync(); emit({ type: 'github', accounts: gh.accounts, active: gh.active }); } catch (_) {}
       // Push the operator's real repo list to the backend (it has no gh auth).
       // Async so registration/connect isn't blocked on the gh call.
       fetchRepos().then((repos) => {
@@ -1476,6 +1499,23 @@ function startWsClient() {
         } else if (msg.type === 'run_task') {
           log(`run_task task=${msg.taskId} (${STUB_MODE ? 'STUB' : 'REAL'})`);
           await handleRunTask(msg, emit);
+        } else if (msg.type === 'gh_switch') {
+          try {
+            await run('gh', ['auth', 'switch', '--user', msg.user], { timeoutMs: 20000 });
+            GH_USER = ghLoginSync();
+            const gh = ghAccountsSync();
+            emit({ type: 'github', accounts: gh.accounts, active: gh.active });
+            const repos = await fetchRepos(); if (repos.length) emit({ type: 'repos', repos });
+            log(`switched gh account to ${msg.user}`);
+          } catch (err) { log('gh switch failed:', err.message); }
+        } else if (msg.type === 'gh_logout') {
+          try {
+            await run('gh', ['auth', 'logout', '--user', msg.user], { timeoutMs: 20000 });
+            GH_USER = ghLoginSync();
+            const gh = ghAccountsSync();
+            emit({ type: 'github', accounts: gh.accounts, active: gh.active });
+            log(`logged out gh account ${msg.user}`);
+          } catch (err) { log('gh logout failed:', err.message); }
         } else if (msg.type === 'build_graph') {
           // On-demand repo graph for the app's Map tab.
           await handleBuildGraph(msg, emit);
