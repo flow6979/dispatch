@@ -123,7 +123,7 @@ function readStateMirror() {
 
 const INDEX_DIR = path.join(STATE_DIR, 'repo-index');
 const SRC_EXT = new Set([
-  'js', 'jsx', 'ts', 'tsx', 'mjs', 'cjs', 'py', 'rb', 'go', 'java', 'kt', 'rs',
+  'js', 'jsx', 'ts', 'tsx', 'mjs', 'cjs', 'py', 'rb', 'go', 'java', 'kt', 'kts', 'rs',
   'php', 'c', 'cc', 'cpp', 'h', 'hpp', 'cs', 'swift', 'scala', 'sh', 'sql',
 ]);
 // Top-level declarations across common languages.
@@ -221,10 +221,56 @@ function buildFileGraph(srcFiles, fileSet, contents, opts = {}) {
   srcFiles.forEach((f) => { const d = f.split('/').slice(0, -1).join('/'); (dirFiles[d] = dirFiles[d] || []).push(f); });
   const JS_CAND = ['', '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.vue', '/index.js', '/index.ts', '/index.tsx', '/index.jsx'];
   const byBasename = {}; // basename(noext) -> [files]
+  // For package/namespace languages (Java/Kotlin/C#/Scala/Rust/PHP): index each
+  // file by the tail of its path (last 1..4 segments, no extension) and by its
+  // directory tail, so a dotted import like `com.example.model.User` or a
+  // wildcard `com.example.model.*` resolves to the right file(s) by suffix.
+  const noExtByTail = {};
+  const filesByDirTail = {};
   srcFiles.forEach((f) => {
     const b = f.split('/').pop().replace(/\.[^.]+$/, '');
     (byBasename[b] = byBasename[b] || []).push(f);
+    const noext = f.replace(/\.[^./]+$/, '');
+    const segs = noext.split('/');
+    for (let k = 1; k <= Math.min(4, segs.length); k++) {
+      const t = segs.slice(-k).join('/'); (noExtByTail[t] = noExtByTail[t] || []).push(f);
+    }
+    const dir = f.split('/').slice(0, -1);
+    for (let k = 1; k <= Math.min(3, dir.length); k++) {
+      const t = dir.slice(-k).join('/'); (filesByDirTail[t] = filesByDirTail[t] || []).push(f);
+    }
   });
+  function resolvePkg(spec) {
+    let s = String(spec).replace(/[.:\\]+/g, '/').replace(/^\/+/, '');
+    const wild = /\/\*?$/.test(s) && /\*|\/$/.test(s);
+    s = s.replace(/\/\*?$/, '');
+    const segs = s.split('/').filter(Boolean);
+    if (!segs.length) return [];
+    if (wild) {
+      for (let k = Math.min(3, segs.length); k >= 1; k--) {
+        const hits = filesByDirTail[segs.slice(-k).join('/')];
+        if (hits && hits.length) return hits.slice(0, 6);
+      }
+      return [];
+    }
+    for (let k = Math.min(4, segs.length); k >= 2; k--) {
+      const hits = noExtByTail[segs.slice(-k).join('/')];
+      if (hits && hits.length === 1) return [hits[0]];
+      if (hits && hits.length && k >= 3) return [hits[0]];
+    }
+    const last = segs[segs.length - 1];
+    if (byBasename[last] && byBasename[last].length === 1) return [byBasename[last][0]];
+    // Multiple types per file (Kotlin/Scala): the last segment is a class in the
+    // package — resolve the package (drop it) to the directory's files.
+    if (segs.length >= 2 && /^[A-Z]/.test(last)) {
+      const pkg = segs.slice(0, -1);
+      for (let k = Math.min(3, pkg.length); k >= 1; k--) {
+        const hits = filesByDirTail[pkg.slice(-k).join('/')];
+        if (hits && hits.length) return hits.slice(0, 6);
+      }
+    }
+    return [];
+  }
   function resolveRel(fromFile, spec, cands) {
     const baseDir = fromFile.split('/').slice(0, -1).join('/');
     const stack = [];
@@ -262,6 +308,9 @@ function buildFileGraph(srcFiles, fileSet, contents, opts = {}) {
   const jsRe = /(?:from\s+|\brequire\(\s*|\bimport\(\s*|\bimport\s+)['"]([^'"]+)['"]/g;
   const pyRe = /^\s*(?:from\s+([\w.]+)\s+import|import\s+([\w.]+))/gm;
   const goRe = /"([^"]+)"/g; // inside Go import ( ... ) blocks
+  // Java/Kotlin/Scala/C#/PHP/Rust: `import a.b.C;` `using A.B;` `use A\B\C;` `use a::b::c;`
+  const pkgRe = /^\s*(?:import|using|use)\s+(?:static\s+)?([A-Za-z_][\w.:\\]*(?:\.\*|::\*)?)/gm;
+  const rustModRe = /^\s*(?:pub\s+)?mod\s+([a-z_]\w*)\s*;/gm;
   const genRe = /(?:import|use|require|include)\s+['"]([^'"]+)['"]/g;
   const edgesSet = new Set(); const edges = [];
   const addEdge = (s, t) => { if (t && t !== s && !edgesSet.has(s + ' ' + t)) { edgesSet.add(s + ' ' + t); edges.push({ source: s, target: t }); } };
@@ -269,7 +318,24 @@ function buildFileGraph(srcFiles, fileSet, contents, opts = {}) {
     const c = contents[f]; if (!c) continue;
     const ext = (f.split('.').pop() || '').toLowerCase();
     const lang = ['js', 'jsx', 'ts', 'tsx', 'mjs', 'cjs', 'vue'].includes(ext) ? 'js'
-      : ext === 'py' ? 'py' : ext === 'go' ? 'go' : 'gen';
+      : ext === 'py' ? 'py' : ext === 'go' ? 'go'
+      : ['java', 'kt', 'kts', 'scala', 'cs', 'php', 'rs'].includes(ext) ? 'pkg' : 'gen';
+    if (lang === 'pkg') {
+      // Dotted/namespaced package imports → resolve by path suffix.
+      pkgRe.lastIndex = 0; let p; let pn = 0;
+      while ((p = pkgRe.exec(c)) && pn < 80) { pn++; resolvePkg(p[1]).forEach((tf) => addEdge(f, tf)); }
+      if (ext === 'rs') { // Rust: `mod foo;` → sibling foo.rs or foo/mod.rs
+        rustModRe.lastIndex = 0; let r; let rn = 0;
+        const baseDir = f.split('/').slice(0, -1).join('/');
+        while ((r = rustModRe.exec(c)) && rn < 40) {
+          rn++;
+          const cand1 = (baseDir ? baseDir + '/' : '') + r[1] + '.rs';
+          const cand2 = (baseDir ? baseDir + '/' : '') + r[1] + '/mod.rs';
+          if (fileSet.has(cand1)) addEdge(f, cand1); else if (fileSet.has(cand2)) addEdge(f, cand2);
+        }
+      }
+      continue;
+    }
     if (lang === 'go' && goModule) {
       // Go imports are package paths; strip the module prefix → repo dir, and
       // link this file to the files in that package (capped).
