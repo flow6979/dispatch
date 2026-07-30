@@ -86,13 +86,18 @@ export async function resetAuth() {
   setStatus('needs-pairing');
 }
 
+// Build headers — only declare a JSON content-type when we actually send a
+// body, otherwise Fastify rejects the empty body (FST_ERR_CTP_EMPTY_JSON_BODY).
+function headersFor(token, opts) {
+  const h = { Authorization: `Bearer ${token}`, ...(opts.headers || {}) };
+  if (opts.body != null) h['Content-Type'] = 'application/json';
+  return h;
+}
+
 async function req(path, opts = {}) {
   if (!authToken && status === 'checking') await bootstrapAuth();
   const token = authToken || SECRET;
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...opts,
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(opts.headers || {}) },
-  });
+  const res = await fetch(`${API_BASE}${path}`, { ...opts, headers: headersFor(token, opts) });
   if (res.status === 401) {
     // Token invalid (e.g. backend wiped it on a redeploy) — drop it, re-enroll,
     // and RETRY the request once so the call transparently recovers.
@@ -100,10 +105,7 @@ async function req(path, opts = {}) {
     try { await AsyncStorage.removeItem(TOKEN_KEY); } catch (_) {}
     await bootstrapAuth();
     const t2 = authToken || SECRET;
-    const res2 = await fetch(`${API_BASE}${path}`, {
-      ...opts,
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${t2}`, ...(opts.headers || {}) },
-    });
+    const res2 = await fetch(`${API_BASE}${path}`, { ...opts, headers: headersFor(t2, opts) });
     if (res2.status === 401) { setStatus('needs-pairing'); throw new Error('unauthorized'); }
     if (!res2.ok) { const t = await res2.text().catch(() => ''); throw new Error(`HTTP ${res2.status} ${path} ${t}`.trim()); }
     const ct2 = res2.headers.get('content-type') || '';

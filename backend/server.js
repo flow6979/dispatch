@@ -602,6 +602,13 @@ async function build() {
   await app.register(cors, { origin: true });
   await app.register(websocket);
 
+  // Tolerate an empty body on application/json POSTs (some clients set the
+  // content-type without a body) instead of throwing FST_ERR_CTP_EMPTY_JSON_BODY.
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (req, body, done) => {
+    if (!body || !String(body).trim()) return done(null, {});
+    try { done(null, JSON.parse(body)); } catch (err) { err.statusCode = 400; done(err, undefined); }
+  });
+
   // Auth gate for REST. Health (keep-warm) and enroll (bootstrap) are open;
   // everything else needs the shared secret or a per-device token.
   const OPEN_ROUTES = new Set(['/api/health', '/api/enroll', '/api/pair']);
