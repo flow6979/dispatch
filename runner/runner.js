@@ -355,6 +355,32 @@ function buildFileGraph(srcFiles, fileSet, contents, opts = {}) {
     re.lastIndex = 0;
     while ((m = re.exec(c)) && n < 80) { n++; addEdge(f, resolve(f, m[1] || m[2], lang)); }
   }
+
+  // Cross-file symbol references: file A → file B if A uses a top-level type
+  // defined in B. Catches usage that imports miss (same-package Java/default
+  // package, dynamic languages, etc.) so the Files view isn't empty for them.
+  const DEF_RE = /^[\t ]*(?:export\s+|public\s+|private\s+|internal\s+|open\s+|abstract\s+|final\s+|sealed\s+|data\s+)*(?:class|interface|type|enum|struct|trait|object|record|protocol)\s+([A-Z][A-Za-z0-9_]+)/gm;
+  const defByName = {}; // TypeName -> defining file (first definer)
+  for (const f of srcFiles) {
+    const c = contents[f]; if (!c) continue;
+    DEF_RE.lastIndex = 0; let d; let n = 0;
+    while ((d = DEF_RE.exec(c)) && n < 200) { n++; const name = d[1]; if (name && !defByName[name]) defByName[name] = f; }
+  }
+  const defNames = Object.keys(defByName);
+  if (defNames.length && defNames.length <= 2000) {
+    let refEdges = 0;
+    for (const f of srcFiles) {
+      const c = contents[f]; if (!c) continue;
+      const ids = new Set((c.slice(0, 120000).match(/[A-Za-z_]\w{2,}/g)) || []);
+      for (const name of defNames) {
+        const target = defByName[name];
+        if (target === f) continue;
+        if (ids.has(name)) { addEdge(f, target); if (++refEdges > 3000) break; }
+      }
+      if (refEdges > 3000) break;
+    }
+  }
+
   const connected = new Set(); edges.forEach((e) => { connected.add(e.source); connected.add(e.target); });
   const nodes = [...srcFiles.filter((f) => connected.has(f)), ...srcFiles.filter((f) => !connected.has(f)).slice(0, 80)]
     .map((f) => ({ id: f, label: f.split('/').pop(), path: f, group: f.includes('/') ? f.split('/')[0] : '(root)' }));
