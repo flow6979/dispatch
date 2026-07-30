@@ -5,8 +5,8 @@ import { C } from '../../src/theme';
 
 // Custom tab bar drawn to match the mockup: 4 tabs, accent for active.
 function TabBar({ state, descriptors, navigation }) {
-  const labels = { index: 'Capture', tasks: 'Tasks', digest: 'Digest', settings: 'Settings' };
-  const glyphs = { index: '◉', tasks: '▤', digest: '☰', settings: '⚙' };
+  const labels = { index: 'Capture', tasks: 'Tasks', map: 'Map', digest: 'Digest', settings: 'Settings' };
+  const glyphs = { index: '◉', tasks: '▤', map: '◈', digest: '☰', settings: '⚙' };
   return (
     <View style={styles.tabs}>
       {state.routes
@@ -44,6 +44,7 @@ export default function TabsLayout() {
     >
       <Tabs.Screen name="index" />
       <Tabs.Screen name="tasks" />
+      <Tabs.Screen name="map" />
       <Tabs.Screen name="digest" />
       <Tabs.Screen name="settings" />
     </Tabs>
