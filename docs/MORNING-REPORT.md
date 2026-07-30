@@ -85,12 +85,12 @@ Full detail + citations in `docs/research/competitive-and-roadmap.md` and `docs/
 ---
 
 ## Cost math now (per task, sonnet edit, cached repo)
-- First task on a repo: ~one-time index + full read (~$0.20–0.46 depending on repo size).
-- Repeat tasks on the same repo: **~half** that, thanks to prefix caching.
+- A real sandbox build went **$0.46 → $0.065 → $0.054** as optimizations stacked (model routing → repo index → caching + bounding + file-scoping).
+- Repeat tasks on the same repo: **~half** cost, thanks to prefix caching (measured $0.20 → $0.11).
 - A *question* (chat mode) is cheaper still — no clone/edit/PR.
 - Every task is hard-capped at **$3** (`--max-budget-usd`) so nothing runs away.
 
-Biggest remaining lever: **task-scoped file lists** (#2 above) — I can build it next.
+**Also shipped after this report's first draft:** agent bounding (`--strict-mcp-config`, `--max-turns 40`) and **task-scoped file hints** (points claude at likely-relevant files → fewer speculative reads). Next biggest levers: tree-sitter/PageRank map (#4) and RAG retrieval for large repos (#5).
 
 ---
 
