@@ -306,33 +306,67 @@ const ENTITY_RE = [
   /\bclass\s+([A-Z][A-Za-z0-9_]+)\s*\(\s*(?:models\.Model|Base|db\.Model)/g, // Django/SQLAlchemy
 ];
 function buildEntityGraph(srcFiles, contents) {
-  const entities = {}; // name -> {file, kind}
+  const entities = {}; // name -> {file, kind, body}
   const kindOf = (i) => ['class', 'interface', 'type', 'enum', 'struct', 'model', 'table', 'model'][i] || 'entity';
   for (const f of srcFiles) {
     const c = contents[f]; if (!c) continue;
+    // Collect every entity definition with its position so we can slice out its
+    // body (def → next def), and search references only within that body.
+    const defs = [];
     ENTITY_RE.forEach((re, i) => {
       re.lastIndex = 0; let m; let n = 0;
-      while ((m = re.exec(c)) && n < 200) { n++; const name = m[1]; if (name && !entities[name]) entities[name] = { file: f, kind: kindOf(i) }; }
+      while ((m = re.exec(c)) && n < 200) { n++; if (m[1]) defs.push({ name: m[1], kind: kindOf(i), pos: m.index }); }
+    });
+    defs.sort((a, b) => a.pos - b.pos);
+    // Multiple patterns can match the same definition at the same position
+    // (e.g. generic "class X" and Django "class X(models.Model)"). Dedupe by
+    // name so body slices (def → next def) aren't collapsed to empty.
+    const seenName = new Set(); const uniq = [];
+    for (const d of defs) { if (!seenName.has(d.name)) { seenName.add(d.name); uniq.push(d); } }
+    uniq.forEach((d, idx) => {
+      if (entities[d.name]) return;
+      const end = idx + 1 < uniq.length ? uniq[idx + 1].pos : Math.min(c.length, d.pos + 2000);
+      entities[d.name] = { file: f, kind: d.kind, body: c.slice(d.pos, end) };
     });
   }
-  const names = Object.keys(entities);
-  if (names.length > 400) names.length = 400;
-  const nameSet = new Set(names);
+  let names = Object.keys(entities);
+  if (names.length > 400) names = names.slice(0, 400);
+  // A references B only in a MEANINGFUL position (inheritance, type annotation,
+  // instantiation, member access, FK/association) — not a bare mention — so the
+  // graph shows real relationships instead of every co-defined pair.
+  function meaningfulRef(content, b) {
+    const B = b.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const bl = b.toLowerCase();
+    const pats = [
+      'extends\\s+' + B + '\\b',
+      'implements\\s+[\\w,\\s]*\\b' + B + '\\b',
+      ':\\s*' + B + '\\b',            // type annotation / TS field
+      '<\\s*' + B + '[\\s,>]',        // generic param
+      '\\bnew\\s+' + B + '\\b',       // instantiation
+      '\\b' + B + '\\s*\\(',          // call / construct
+      '\\b' + B + '\\.',              // static / member access
+      '\\b' + B + '\\[\\]',           // array type
+      'references\\s+"?' + bl,        // SQL foreign key
+      '(?:belongs_to|has_many|has_one|references)\\s+:?' + bl, // Rails/ORM assoc
+      '@(?:ManyToOne|OneToMany|ManyToMany|OneToOne)[^;\\n]*' + B, // JPA
+      'ForeignKey\\([^)]*' + B,       // Django/SQLAlchemy FK
+    ];
+    return new RegExp(pats.join('|'), 'i').test(content);
+  }
   const edgesSet = new Set(); const edges = [];
-  // Edge A->B if A's file references B's name (word boundary), A!=B.
   for (const a of names) {
-    const c = contents[entities[a].file]; if (!c) continue;
+    const body = entities[a].body; if (!body) continue;
     for (const b of names) {
       if (a === b) continue;
-      if (new RegExp('\\b' + b.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b').test(c)) {
+      if (meaningfulRef(body, b)) {
         const key = a + ' ' + b;
         if (!edgesSet.has(key)) { edgesSet.add(key); edges.push({ source: a, target: b }); }
       }
     }
-    if (edges.length > 1200) break;
+    if (edges.length > 1500) break;
   }
   const nodes = names.map((n) => ({ id: n, label: n, group: entities[n].kind, path: entities[n].file }));
-  return degreeAndFinish(nodes, edges, { note: nameSet.size ? undefined : 'no data entities detected' });
+  return degreeAndFinish(nodes, edges, { note: names.length ? undefined : 'no data entities detected' });
 }
 
 // --- apiflow: routes -> entities they likely touch (best-effort) ---
