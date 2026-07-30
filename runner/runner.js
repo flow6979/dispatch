@@ -426,16 +426,19 @@ async function generateSpec({ promptText, repo, baseBranch, workBranch }) {
 // ---------------------------------------------------------------------------
 
 /** Build the common claude CLI flags for model routing + dollar budget cap. */
-function claudeFlags({ model, maxBudgetUsd } = {}) {
+function claudeFlags({ model, maxBudgetUsd, maxTurns } = {}) {
   // --exclude-dynamic-system-prompt-sections strips per-session/dir/git context
   // from the system prompt so the prefix is byte-identical across worktrees and
   // can be reused from the prompt cache (huge input-token savings on repeat
-  // tasks per repo).
-  const f = ['--exclude-dynamic-system-prompt-sections'];
+  // tasks per repo). --strict-mcp-config avoids loading the user's MCP servers
+  // (we need none), trimming fixed system-prompt overhead on every call.
+  const f = ['--exclude-dynamic-system-prompt-sections', '--strict-mcp-config'];
   if (model) f.push('--model', String(model));
   if (maxBudgetUsd && maxBudgetUsd > 0) f.push('--max-budget-usd', String(maxBudgetUsd));
+  if (maxTurns && maxTurns > 0) f.push('--max-turns', String(maxTurns));
   return f;
 }
+const EDIT_MAX_TURNS = Number(process.env.DISPATCH_MAX_TURNS || 40); // safety ceiling
 
 /** Run `claude -p <prompt>` and resolve with stdout. Rejects on error/timeout. */
 function runClaude(prompt, { cwd, timeoutMs = 120000, model, maxBudgetUsd } = {}) {
@@ -775,6 +778,7 @@ async function runTaskReal(task, emit) {
         timeoutMs: Math.min(timeLeft(), 15 * 60 * 1000),
         model: EDIT_MODEL,
         maxBudgetUsd: task.budgetUsd || DEFAULT_BUDGET_USD,
+        maxTurns: EDIT_MAX_TURNS,
         onActivity: (a) => {
           const glyph = a.kind === 'action' ? '🔧' : '💭';
           log(`claude ${a.kind}: ${a.label}`);
